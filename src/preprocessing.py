@@ -187,5 +187,4 @@ def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     preprocessed.reset_index(drop=True, inplace=True)
     logger.info("Preprocessing complete: %d comments kept", len(preprocessed))
     return preprocessed
-```
 

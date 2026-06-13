@@ -365,5 +365,4 @@ def add_topics_to_dataframe(
 
     logger.info("Topics assigned to %d documents", len(df))
     return df, model
-```
 

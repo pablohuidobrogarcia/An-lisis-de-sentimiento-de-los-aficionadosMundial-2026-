@@ -171,5 +171,4 @@ def save_json(data: Any, path: Union[str, Path], indent: int = 2) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         json.dump(data, fh, ensure_ascii=False, indent=indent)
-```
 

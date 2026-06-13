@@ -354,5 +354,4 @@ def save_and_return_results(
     )
     logger.info("Match-integrated results saved.")
     return shift_df
-```
 

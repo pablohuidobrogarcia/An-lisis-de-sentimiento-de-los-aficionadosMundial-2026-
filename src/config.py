@@ -104,5 +104,4 @@ MATCH_POST_WINDOW_HOURS: int = 24
 # ── Evaluation ──────────────────────────────────────────────────────────────
 EVAL_SAMPLE_SIZE: int = 150
 EVAL_OUTPUT_FILE: str = "evaluation/manual_labels.csv"
-```
 

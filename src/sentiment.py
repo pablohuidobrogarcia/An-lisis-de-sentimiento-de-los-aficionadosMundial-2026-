@@ -311,5 +311,4 @@ def add_sentiment_to_dataframe(
     )
     logger.info("Sentiment analysis complete.")
     return result
-```
 

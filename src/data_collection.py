@@ -588,5 +588,4 @@ def incremental_update(
         len(existing), len(new_df), len(combined),
     )
     return combined
-```
 
