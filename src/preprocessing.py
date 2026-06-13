@@ -2,27 +2,38 @@
 Text cleaning, language detection, and normalization pipeline.
 
 Cleaning decisions and their rationale:
-- **URLs and mentions**: Removed because they carry little lexical sentiment
-  signal and introduce noise for topic modeling (unique URLs fragment topics).
 - **HTML entities**: YouTube comments may contain ``&amp;``, ``&lt;``, etc.
   These are decoded back to their text equivalents.
-- **Emojis**: Extracted as a separate *emoji_scores* feature before removal.
-  Emojis can convey strong sentiment but tokenizers handle them poorly.
-- **Non-alphabetic noise**: Extra whitespace, repeated punctuation, and
-  non-linguistic characters are collapsed or removed.
-- **Deduplication**: SHA-256 hash of cleaned text to catch exact duplicates
-  from cross-posting or same user posting identical comments.
+- **URLs and mentions**: Removed because they carry little lexical sentiment
+  signal and introduce noise for topic modeling (unique URLs fragment topics).
+- **YouTube timestamps**: Removed (e.g. ``1:23``, ``12:34``) — these are
+  references to video moments, not linguistic content.
+- **Emojis**: KEPT in the cleaned text because they carry strong sentiment
+  signal for football reactions (e.g. ``"\U0001f1e7\U0001f1f7\U0001f525"``).
+  They are also extracted into a separate ``emojis`` column for potential
+  use as a feature. Earlier versions removed them; we now keep them.
+- **Bullet/list markers**: Stripped from leading/trailing positions.
+- **Repeating characters**: Collapsed (``"nooooo"`` \u2192 ``"nooo"``) to reduce
+  vocabulary sparsity without losing the emphasis signal.
+- **Deduplication**: SHA-256 hash of cleaned text catches exact duplicates
+  from cross-posting or identical comments by the same user.
 - **Language filtering**: Only ``es`` and ``en`` are kept; others are filtered
   out to maintain model quality (the BERT models are language-specific).
+- **Spam filtering**: Comments flagged ``is_spam=True`` at collection time
+  are removed in the notebook (not in this module) so the raw archive
+  remains complete.
 """
 
 import html
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 import pandas as pd
 from langdetect import DetectorFactory, detect_langs
 from langdetect.lang_detect_exception import LangDetectException
+
+if TYPE_CHECKING:
+    from spacy.language import Language
 
 from src.config import (
     FOOTBALL_KEYWORDS,
@@ -51,6 +62,7 @@ EMOJI_PATTERN: re.Pattern = re.compile(
     "]+",
     re.UNICODE,
 )
+TIMESTAMP_PATTERN: re.Pattern = re.compile(r"\b\d{1,2}:\d{2}\b")
 REPEATING_CHARS: re.Pattern = re.compile(r"(.)\1{3,}")
 STRIP_LEADING_DASH: re.Pattern = re.compile(r"^[\s\-•*]+")
 STRIP_TRAILING_DASH: re.Pattern = re.compile(r"[\s\-•*]+$")
@@ -90,6 +102,59 @@ def is_low_signal(text: str) -> bool:
     return not (has_team or has_football)
 
 
+def deduplicate_comments(df: pd.DataFrame) -> pd.DataFrame:
+    """Remove exact duplicate comments based on ``text_hash``.
+
+    Keeps the first occurrence of each hash. Logs how many were removed.
+
+    Args:
+        df: DataFrame with a ``"text_hash"`` column.
+
+    Returns:
+        DataFrame with duplicates removed.
+    """
+    n_before = len(df)
+    result = df.drop_duplicates(subset=["text_hash"], keep="first").copy()
+    n_removed = n_before - len(result)
+    if n_removed:
+        logger.info("Deduplication: removed %d duplicate comments", n_removed)
+    return result
+
+
+def tokenize_text(
+    text: str,
+    lang: str,
+    nlp_es: "Language",
+    nlp_en: "Language",
+) -> List[str]:
+    """Lemmatize and remove stopwords/punctuation using spaCy.
+
+    Uses ``nlp_es`` for Spanish (``"es"``) and ``nlp_en`` for English
+    (``"en"``). For any other language code returns an empty list.
+
+    Args:
+        text: Cleaned text string.
+        lang: ISO language code (``"es"``, ``"en"``, or other).
+        nlp_es: Loaded ``es_core_news_sm`` pipeline.
+        nlp_en: Loaded ``en_core_web_sm`` pipeline.
+
+    Returns:
+        List of lemmatized tokens (lowercase, no stopwords, no punctuation).
+    """
+    if lang == "es":
+        doc = nlp_es(text)
+    elif lang == "en":
+        doc = nlp_en(text)
+    else:
+        return []
+
+    return [
+        token.lemma_.lower()
+        for token in doc
+        if not token.is_stop and not token.is_punct and not token.is_space
+    ]
+
+
 def detect_language(text: str) -> Tuple[str, float]:
     """Detect the language of ``text`` using langdetect.
 
@@ -125,21 +190,25 @@ def clean_text(text: str) -> str:
     1. Decode HTML entities (``&amp;`` → ``&``, etc.).
     2. Remove URLs.
     3. Remove @-mentions.
-    4. Extract and remove emojis.
+    4. Remove YouTube timestamps (``1:23``, ``12:34``).
     5. Strip leading/trailing dashes and bullet markers.
     6. Collapse repeating characters (4+ → 3).
     7. Collapse multiple spaces and strip.
+
+    **Emojis are kept** in the returned text (they carry sentiment signal
+    for football reactions). Use :func:`extract_emojis` separately if you
+    need the emoji string as a feature.
 
     Args:
         text: Raw comment text.
 
     Returns:
-        Cleaned text.
+        Cleaned text with emojis preserved.
     """
     text = html.unescape(text)
     text = URL_PATTERN.sub("", text)
     text = MENTION_PATTERN.sub("", text)
-    text = EMOJI_PATTERN.sub("", text)
+    text = TIMESTAMP_PATTERN.sub("", text)
     text = STRIP_LEADING_DASH.sub("", text)
     text = STRIP_TRAILING_DASH.sub("", text)
     text = REPEATING_CHARS.sub(r"\1\1\1", text)
@@ -194,7 +263,11 @@ def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     - ``emojis``: extracted emoji string.
     - ``n_emojis``: count of emoji sequences.
 
-    Drops rows that fail language filtering or are too short.
+    Processing steps:
+    1. Per-row: language detection, text cleaning, emoji extraction.
+    2. Drop rows that fail language filtering (not ``es``/``en``) or are
+       too short (``< 10`` chars after cleaning).
+    3. Deduplicate on ``text_hash`` (keeps first occurrence).
 
     Args:
         df: DataFrame with at least a ``"text"`` column.
@@ -218,11 +291,7 @@ def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
         axis=1,
     )
 
-    n_before = len(preprocessed)
-    preprocessed = preprocessed.drop_duplicates(subset=["text_hash"], keep="first")
-    n_dup = n_before - len(preprocessed)
-    if n_dup:
-        logger.info("Removed %d duplicate comments", n_dup)
+    preprocessed = deduplicate_comments(preprocessed)
 
     preprocessed.reset_index(drop=True, inplace=True)
     logger.info("Preprocessing complete: %d comments kept", len(preprocessed))
