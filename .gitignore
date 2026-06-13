@@ -1,0 +1,61 @@
+# ── Environment ──────────────────────────────────────────────────────────────
+.env
+venv/
+.venv/
+miniconda3/
+
+# ── Python ───────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.egg-info/
+dist/
+build/
+*.egg
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Notebooks ────────────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+*/.ipynb_checkpoints/*
+
+# ── Data ─────────────────────────────────────────────────────────────────────
+data/raw/*
+data/processed/*
+!data/raw/.gitkeep
+!data/raw/.checkpoints/
+!data/processed/.gitkeep
+
+# ── Models ───────────────────────────────────────────────────────────────────
+models/
+*.bin
+*.pt
+*.pth
+*.safetensors
+
+# ── Logs ─────────────────────────────────────────────────────────────────────
+*.log
+logs/
+
+# ── IDE / OS ─────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ── Credential / secret files ────────────────────────────────────────────────
+.env
+.env.local
+.env.*.local
+credentials.json
+*.pem
+*.key
+service-account*.json
+client-secret*.json
+.streamlit/secrets.toml
+
+# Secrets baseline for detect-secrets (auto-generated, safe to commit)
+!.secrets.baseline
