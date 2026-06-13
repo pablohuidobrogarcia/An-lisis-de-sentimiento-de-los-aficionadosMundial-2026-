@@ -27,15 +27,15 @@ from src.config import (
     CHECKPOINT_DIR,
     COLLECTION_QUOTA_BUDGET,
     COLLECTION_TIME_BUDGET_SECONDS,
+    FOOTBALL_KEYWORDS,
     MATCH_PLAYED_BUFFER_HOURS,
-    PROCESSED_DIR,
     RAW_DIR,
     TARGET_TEAMS,
+    TEAM_ALIASES,
     TEAM_KEYWORDS,
     YOUTUBE_API_KEY,
     YOUTUBE_API_SERVICE_NAME,
     YOUTUBE_API_VERSION,
-    YOUTUBE_CHANNELS,
     YOUTUBE_DAILY_QUOTA,
     YOUTUBE_MAX_COMMENTS_PER_VIDEO,
     YOUTUBE_MAX_RESULTS_PER_SEARCH,
@@ -45,7 +45,8 @@ from src.config import (
     YOUTUBE_SEARCH_TEMPLATES,
     YOUTUBE_SLEEP_BETWEEN_CALLS,
 )
-from src.utils import setup_logger, text_hash, save_dataframe, load_dataframe
+from src.preprocessing import is_likely_spam
+from src.utils import load_dataframe, save_dataframe, setup_logger, text_hash
 
 logger = setup_logger(__name__)
 
@@ -64,6 +65,7 @@ def _load_quota_usage() -> Dict[str, Any]:
     """Load today's quota usage from disk."""
     if QUOTA_LOG_FILE.exists():
         import json
+
         with open(QUOTA_LOG_FILE, "r") as f:
             data = json.load(f)
         # Reset if it's a new day
@@ -77,6 +79,7 @@ def _load_quota_usage() -> Dict[str, Any]:
 def _save_quota_usage(quota_used: int) -> None:
     """Persist quota usage to disk."""
     import json
+
     data = {
         "date": datetime.now(timezone.utc).strftime("%Y-%m-%d"),
         "quota_used": quota_used,
@@ -97,7 +100,10 @@ def _check_quota(quota_cost: int) -> bool:
         logger.warning(
             "YouTube quota would be exceeded: %d used + %d cost = %d "
             "(safety margin %d). Stopping.",
-            usage["quota_used"], quota_cost, projected, YOUTUBE_QUOTA_SAFETY_MARGIN,
+            usage["quota_used"],
+            quota_cost,
+            projected,
+            YOUTUBE_QUOTA_SAFETY_MARGIN,
         )
         return False
     return True
@@ -118,8 +124,7 @@ def _build_youtube_client():
     """Build and return an authenticated YouTube API service object."""
     if not YOUTUBE_API_KEY:
         raise ValueError(
-            "YouTube API key missing. "
-            "Set YOUTUBE_API_KEY in your .env file."
+            "YouTube API key missing. " "Set YOUTUBE_API_KEY in your .env file."
         )
     return build(
         YOUTUBE_API_SERVICE_NAME,
@@ -164,19 +169,22 @@ def _api_call(
                     logger.error("YouTube quota exceeded. Stop collection.")
                     return None
                 if "commentsDisabled" in reason:
-                    logger.warning("Comments disabled for video %s, skipping.", kwargs.get("videoId", "?"))
+                    logger.warning(
+                        "Comments disabled for video %s, skipping.",
+                        kwargs.get("videoId", "?"),
+                    )
                     return None
                 logger.warning("Forbidden (403): %s", exc)
                 return None
             elif exc.resp.status == 429:
-                wait = 2 ** attempt
+                wait = 2**attempt
                 logger.warning("Rate limited (429). Waiting %ds …", wait)
                 time.sleep(wait)
             else:
                 logger.error("YouTube API error: %s", exc)
                 if attempt == max_retries - 1:
                     return None
-                time.sleep(2 ** attempt)
+                time.sleep(2**attempt)
 
     return None
 
@@ -188,6 +196,7 @@ def _load_processed_videos() -> Set[str]:
     """Load set of already-processed video IDs."""
     if CHECKPOINT_FILE.exists():
         import json
+
         with open(CHECKPOINT_FILE, "r") as f:
             return set(json.load(f).get("processed_video_ids", []))
     return set()
@@ -196,6 +205,7 @@ def _load_processed_videos() -> Set[str]:
 def _save_processed_video(video_id: str) -> None:
     """Add a single video ID to the checkpoint (incremental)."""
     import json
+
     processed = _load_processed_videos()
     processed.add(video_id)
     with open(CHECKPOINT_FILE, "w") as f:
@@ -205,6 +215,7 @@ def _save_processed_video(video_id: str) -> None:
 def _save_processed_videos_batch(video_ids: Set[str]) -> None:
     """Overwrite the checkpoint with a complete set of video IDs."""
     import json
+
     with open(CHECKPOINT_FILE, "w") as f:
         json.dump({"processed_video_ids": sorted(video_ids)}, f, ensure_ascii=False)
 
@@ -239,6 +250,20 @@ def _resolve_teams_from_video(
             if t not in teams:
                 teams.append(t)
     return teams
+
+
+def _video_is_relevant(video: Dict[str, Any], team: str, opponent: str) -> bool:
+    """Check if a video is likely about the target match.
+
+    A video is relevant if its title/description mentions at least one of:
+    - the team *or* opponent name (via team aliases), or
+    - a football keyword (world cup, highlights, etc.)
+    """
+    combined = (video["title"] + " " + video.get("description", "")).lower()
+    team_names = list(TEAM_ALIASES.get(team, [])) + list(TEAM_ALIASES.get(opponent, []))
+    has_team_ref = any(alias in combined for alias in team_names)
+    has_football_ref = any(kw in combined for kw in FOOTBALL_KEYWORDS)
+    return has_team_ref or has_football_ref
 
 
 # ── Video search ───────────────────────────────────────────────────────────
@@ -279,8 +304,12 @@ def _search_videos_for_match(
             type="video",
             maxResults=YOUTUBE_MAX_RESULTS_PER_SEARCH,
             order="relevance",
-            publishedAfter=_date_to_rfc3339(match_date, days_before=YOUTUBE_PUBLISHED_AFTER_DAYS),
-            publishedBefore=_date_to_rfc3339(match_date, days_after=YOUTUBE_PUBLISHED_BEFORE_DAYS),
+            publishedAfter=_date_to_rfc3339(
+                match_date, days_before=YOUTUBE_PUBLISHED_AFTER_DAYS
+            ),
+            publishedBefore=_date_to_rfc3339(
+                match_date, days_after=YOUTUBE_PUBLISHED_BEFORE_DAYS
+            ),
         )
 
         if search_result is None:
@@ -292,18 +321,20 @@ def _search_videos_for_match(
             if vid in processed_ids:
                 continue
             snippet = item["snippet"]
-            videos.append({
-                "video_id": vid,
-                "title": snippet.get("title", ""),
-                "description": snippet.get("description", ""),
-                "published_at": snippet.get("publishedAt", ""),
-                "channel_id": snippet.get("channelId", ""),
-                "channel_title": snippet.get("channelTitle", ""),
-                "search_query": query,
-                "team": team,
-                "opponent": opponent,
-                "match_date": match_date,
-            })
+            videos.append(
+                {
+                    "video_id": vid,
+                    "title": snippet.get("title", ""),
+                    "description": snippet.get("description", ""),
+                    "published_at": snippet.get("publishedAt", ""),
+                    "channel_id": snippet.get("channelId", ""),
+                    "channel_title": snippet.get("channelTitle", ""),
+                    "search_query": query,
+                    "team": team,
+                    "opponent": opponent,
+                    "match_date": match_date,
+                }
+            )
 
     return videos
 
@@ -359,7 +390,9 @@ def _fetch_comments_for_video(
         if next_page_token:
             params["pageToken"] = next_page_token
 
-        response = _api_call(client, quota_cost=1, method=client.commentThreads().list, **params)
+        response = _api_call(
+            client, quota_cost=1, method=client.commentThreads().list, **params
+        )
         if response is None:
             break
 
@@ -412,24 +445,28 @@ def _fetch_replies(
         if next_page_token:
             params["pageToken"] = next_page_token
 
-        response = _api_call(client, quota_cost=1, method=client.comments().list, **params)
+        response = _api_call(
+            client, quota_cost=1, method=client.comments().list, **params
+        )
         if response is None:
             break
 
         for item in response.get("items", []):
             snippet = item["snippet"]
-            replies.append({
-                "comment_id": item["id"],
-                "video_id": video_id,
-                "parent_id": parent_id,
-                "text": snippet.get("textDisplay", ""),
-                "author": snippet.get("authorDisplayName", "[unknown]"),
-                "published_at": snippet.get("publishedAt", ""),
-                "like_count": snippet.get("likeCount", 0),
-                "total_reply_count": 0,
-                "source": "youtube",
-                "collected_at": datetime.now(timezone.utc).isoformat(),
-            })
+            replies.append(
+                {
+                    "comment_id": item["id"],
+                    "video_id": video_id,
+                    "parent_id": parent_id,
+                    "text": snippet.get("textDisplay", ""),
+                    "author": snippet.get("authorDisplayName", "[unknown]"),
+                    "published_at": snippet.get("publishedAt", ""),
+                    "like_count": snippet.get("likeCount", 0),
+                    "total_reply_count": 0,
+                    "source": "youtube",
+                    "collected_at": datetime.now(timezone.utc).isoformat(),
+                }
+            )
 
         next_page_token = response.get("nextPageToken")
         if not next_page_token:
@@ -485,18 +522,36 @@ def collect_for_matches(
         # ── Bug 1: skip future matches (defensive type handling) ─────────
         now_ts = pd.Timestamp.now(tz="UTC")
         is_played = pd.notna(utc_date) and (utc_date + buffer) <= now_ts
+
         if not is_played:
             logger.info(
                 "Skipping %s vs %s — not yet played, will retry on a future run",
-                home, away,
+                home,
+                away,
             )
             continue
 
         date_str = str(utc_date)
 
         # Collect for both teams (home and away)
-        teams_to_search = [t for t in TARGET_TEAMS if t.lower() in home.lower() or home.lower() in t.lower()]
-        teams_to_search += [t for t in TARGET_TEAMS if t not in teams_to_search and (t.lower() in away.lower() or away.lower() in t.lower())]
+        teams_to_search = [
+            t
+            for t in TARGET_TEAMS
+            if t.lower() in home.lower() or home.lower() in t.lower()
+        ]
+        teams_to_search += [
+            t
+            for t in TARGET_TEAMS
+            if t not in teams_to_search
+            and (t.lower() in away.lower() or away.lower() in t.lower())
+        ]
+        if not teams_to_search:
+            logger.info(
+                "No target teams in match %s vs %s — match is past but neither team is in %s",
+                home,
+                away,
+                TARGET_TEAMS,
+            )
 
         for team in teams_to_search:
             # ── Bug 5: time budget ──────────────────────────────────────
@@ -505,7 +560,8 @@ def collect_for_matches(
                 logger.info(
                     "Time budget exceeded (%.1fs > %ds), stopping for this run "
                     "— remaining matches will be processed in a future run",
-                    elapsed, COLLECTION_TIME_BUDGET_SECONDS,
+                    elapsed,
+                    COLLECTION_TIME_BUDGET_SECONDS,
                 )
                 break
 
@@ -514,30 +570,47 @@ def collect_for_matches(
             if usage["quota_used"] >= COLLECTION_QUOTA_BUDGET:
                 logger.info(
                     "Quota budget exceeded (%d / %d), stopping for this run",
-                    usage["quota_used"], COLLECTION_QUOTA_BUDGET,
+                    usage["quota_used"],
+                    COLLECTION_QUOTA_BUDGET,
                 )
                 break
 
             opponent = away if team.lower() in home.lower() else home
             logger.info(
-                "Searching videos for %s vs %s (%s)", team, opponent, date_str,
+                "Searching videos for %s vs %s (%s)",
+                team,
+                opponent,
+                date_str,
             )
 
-            videos = _search_videos_for_match(client, team, opponent, date_str, processed_ids)
+            videos = _search_videos_for_match(
+                client, team, opponent, date_str, processed_ids
+            )
             new_videos = [
-                v for v in videos
+                v
+                for v in videos
                 if v["video_id"] not in processed_ids
                 and v["video_id"] not in run_processed_videos
             ]
 
-            if not new_videos:
-                logger.info("  No new videos found for %s vs %s", team, opponent)
+            # ── Part 2a: filter out irrelevant videos ──────────────
+            relevant_videos = [
+                v for v in new_videos if _video_is_relevant(v, team, opponent)
+            ]
+            n_skipped = len(new_videos) - len(relevant_videos)
+            if n_skipped:
+                logger.info(
+                    "  Skipped %d irrelevant videos (no team/football ref)", n_skipped
+                )
+
+            if not relevant_videos:
+                logger.info("  No relevant videos found for %s vs %s", team, opponent)
                 continue
 
-            logger.info("  Found %d new videos", len(new_videos))
-            all_videos.extend(new_videos)
+            logger.info("  Found %d relevant videos", len(relevant_videos))
+            all_videos.extend(relevant_videos)
 
-            for vid_info in new_videos:
+            for vid_info in relevant_videos:
                 vid = vid_info["video_id"]
 
                 # ── Bug 4: skip if already processed this run ─────────
@@ -562,6 +635,8 @@ def collect_for_matches(
                     cr["search_team"] = team
                     cr["search_opponent"] = opponent
                     cr["match_date"] = date_str
+                    # Part 2b: tag spam (flag, don't drop — keeps raw archive complete)
+                    cr["is_spam"] = is_likely_spam(cr["text"])
 
                 all_comments.extend(comment_records)
 
@@ -570,7 +645,9 @@ def collect_for_matches(
                 processed_ids.add(vid)
                 _save_processed_video(vid)
                 logger.info(
-                    "    → %d comments from video %s", len(comment_records), vid,
+                    "    → %d comments from video %s",
+                    len(comment_records),
+                    vid,
                 )
 
     # Persist videos
@@ -591,7 +668,9 @@ def collect_for_matches(
     # Log quota summary
     usage = _load_quota_usage()
     logger.info(
-        "Quota used today: %d / %d units", usage["quota_used"], YOUTUBE_DAILY_QUOTA,
+        "Quota used today: %d / %d units",
+        usage["quota_used"],
+        YOUTUBE_DAILY_QUOTA,
     )
 
     return comments_df
@@ -648,7 +727,8 @@ def incremental_update(
     save_dataframe(combined, str(COMMENTS_FILE), format=output_format)
     logger.info(
         "Incremental update: %d existing + %d new = %d total",
-        len(existing), len(new_df), len(combined),
+        len(existing),
+        len(new_df),
+        len(combined),
     )
     return combined
-

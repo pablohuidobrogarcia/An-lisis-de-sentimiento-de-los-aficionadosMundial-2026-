@@ -1,13 +1,12 @@
 """Tests for the sentiment analysis module."""
 
 import pandas as pd
-import pytest
 
 from src.sentiment import (
     _baseline_es,
-    predict_sentiment,
-    predict_batch,
     add_sentiment_to_dataframe,
+    predict_batch,
+    predict_sentiment,
 )
 
 
@@ -60,10 +59,12 @@ class TestPredictBatch:
 
 class TestAddSentimentToDataFrame:
     def test_adds_columns(self) -> None:
-        df = pd.DataFrame({
-            "text_clean": ["Great match!", "Mal partido"],
-            "language": ["en", "es"],
-        })
+        df = pd.DataFrame(
+            {
+                "text_clean": ["Great match!", "Mal partido"],
+                "language": ["en", "es"],
+            }
+        )
         result = add_sentiment_to_dataframe(df)
         assert "sentiment_label" in result.columns
         assert "sentiment_positive" in result.columns
@@ -74,5 +75,3 @@ class TestAddSentimentToDataFrame:
         df = pd.DataFrame({"text_clean": [], "language": []})
         result = add_sentiment_to_dataframe(df)
         assert result.empty
-```
-

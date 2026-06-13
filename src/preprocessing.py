@@ -24,7 +24,13 @@ import pandas as pd
 from langdetect import DetectorFactory, detect_langs
 from langdetect.lang_detect_exception import LangDetectException
 
-from src.config import LANG_DETECT_CONFIDENCE_THRESHOLD, SUPPORTED_LANGUAGES
+from src.config import (
+    FOOTBALL_KEYWORDS,
+    LANG_DETECT_CONFIDENCE_THRESHOLD,
+    SPAM_PHRASES,
+    SUPPORTED_LANGUAGES,
+    TEAM_ALIASES,
+)
 from src.utils import setup_logger, text_hash
 
 DetectorFactory.seed = 42
@@ -48,6 +54,40 @@ EMOJI_PATTERN: re.Pattern = re.compile(
 REPEATING_CHARS: re.Pattern = re.compile(r"(.)\1{3,}")
 STRIP_LEADING_DASH: re.Pattern = re.compile(r"^[\s\-•*]+")
 STRIP_TRAILING_DASH: re.Pattern = re.compile(r"[\s\-•*]+$")
+
+# ── Spam / signal detection ─────────────────────────────────────────────────
+
+
+def _all_team_aliases() -> List[str]:
+    aliases: List[str] = []
+    for names in TEAM_ALIASES.values():
+        aliases.extend(names)
+    return list(set(aliases))
+
+
+_ALL_TEAM_ALIASES: List[str] = _all_team_aliases()
+
+
+def is_likely_spam(text: str) -> bool:
+    """Heuristic spam detection based on common bot/promotional phrases."""
+    lower = text.lower()
+    for phrase in SPAM_PHRASES:
+        if phrase in lower:
+            return True
+    return False
+
+
+def is_low_signal(text: str) -> bool:
+    """Check if a comment lacks football relevance (too generic or off-topic).
+
+    A comment is low-signal if it contains **neither**:
+    - a known team alias, nor
+    - a football keyword.
+    """
+    lower = text.lower()
+    has_team = any(alias in lower for alias in _ALL_TEAM_ALIASES)
+    has_football = any(kw in lower for kw in FOOTBALL_KEYWORDS)
+    return not (has_team or has_football)
 
 
 def detect_language(text: str) -> Tuple[str, float]:
@@ -187,4 +227,3 @@ def preprocess_dataframe(df: pd.DataFrame) -> pd.DataFrame:
     preprocessed.reset_index(drop=True, inplace=True)
     logger.info("Preprocessing complete: %d comments kept", len(preprocessed))
     return preprocessed
-

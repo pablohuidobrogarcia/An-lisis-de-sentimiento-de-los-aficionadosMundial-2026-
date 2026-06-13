@@ -1,7 +1,6 @@
 """Tests for the preprocessing module."""
 
 import pandas as pd
-import pytest
 
 from src.preprocessing import (
     clean_text,
@@ -56,12 +55,16 @@ class TestCleanText:
 
 class TestDetectLanguage:
     def test_detect_spanish(self) -> None:
-        lang, conf = detect_language("Me encanta el fútbol, es el mejor deporte del mundo")
+        lang, conf = detect_language(
+            "Me encanta el fútbol, es el mejor deporte del mundo"
+        )
         assert lang == "es"
         assert conf >= 0.7
 
     def test_detect_english(self) -> None:
-        lang, conf = detect_language("This is an amazing goal by the best team in the world")
+        lang, conf = detect_language(
+            "This is an amazing goal by the best team in the world"
+        )
         assert lang == "en"
         assert conf >= 0.7
 
@@ -102,25 +105,27 @@ class TestPreprocessComment:
 
 class TestPreprocessDataFrame:
     def test_returns_same_columns_plus_new(self) -> None:
-        df = pd.DataFrame({
-            "text": ["Great game by Spain!", "Mal partido de Argentina"],
-            "video_title": ["Highlights Spain vs X", "Resumen Argentina vs Y"],
-            "teams": ["Spain", "Argentina"],
-            "published_at": ["2026-06-15T12:00:00+00:00"] * 2,
-        })
+        df = pd.DataFrame(
+            {
+                "text": ["Great game by Spain!", "Mal partido de Argentina"],
+                "video_title": ["Highlights Spain vs X", "Resumen Argentina vs Y"],
+                "teams": ["Spain", "Argentina"],
+                "published_at": ["2026-06-15T12:00:00+00:00"] * 2,
+            }
+        )
         result = preprocess_dataframe(df)
         assert "text_clean" in result.columns
         assert "language" in result.columns
         assert len(result) <= len(df)
 
     def test_deduplicates_by_hash(self) -> None:
-        df = pd.DataFrame({
-            "text": ["Same text here"] * 5,
-            "video_title": ["Some video"] * 5,
-            "teams": ["Spain"] * 5,
-            "published_at": ["2026-06-15T12:00:00+00:00"] * 5,
-        })
+        df = pd.DataFrame(
+            {
+                "text": ["Same text here"] * 5,
+                "video_title": ["Some video"] * 5,
+                "teams": ["Spain"] * 5,
+                "published_at": ["2026-06-15T12:00:00+00:00"] * 5,
+            }
+        )
         result = preprocess_dataframe(df)
         assert len(result) <= 3  # some may get filtered by language
-```
-

@@ -10,7 +10,6 @@ Usage:
 
 import sys
 from pathlib import Path
-from typing import Optional
 
 import pandas as pd
 import plotly.express as px
@@ -22,8 +21,8 @@ _project_root = Path(__file__).resolve().parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from src.config import TARGET_TEAMS, PROCESSED_DIR
-from src.utils import load_dataframe, setup_logger
+from src.config import PROCESSED_DIR, TARGET_TEAMS  # noqa: E402
+from src.utils import load_dataframe, setup_logger  # noqa: E402
 
 logger = setup_logger(__name__)
 
@@ -178,13 +177,15 @@ st.sidebar.markdown(
 
 # ── Tabs ───────────────────────────────────────────────────────────────────
 
-tab1, tab2, tab3, tab4, tab5 = st.tabs([
-    "📊 Resumen Ejecutivo",
-    "📈 Evolución Temporal",
-    "🏆 Comparativa",
-    "📋 Temas",
-    "⚽ Impacto de Partidos",
-])
+tab1, tab2, tab3, tab4, tab5 = st.tabs(
+    [
+        "📊 Resumen Ejecutivo",
+        "📈 Evolución Temporal",
+        "🏆 Comparativa",
+        "📋 Temas",
+        "⚽ Impacto de Partidos",
+    ]
+)
 
 # ── Data ────────────────────────────────────────────────────────────────────
 df = filter_dataframe(
@@ -240,23 +241,25 @@ with tab1:
     col_a, col_b = st.columns(2)
     with col_a:
         if "sentiment_label" in df.columns:
-            fig = go.Figure(data=[
-                go.Pie(
-                    labels=["Positivo", "Negativo", "Neutral"],
-                    values=[
-                        kpis["pos_pct"] * 100,
-                        kpis["neg_pct"] * 100,
-                        kpis["neu_pct"] * 100,
-                    ],
-                    marker_colors=[
-                        COLORS["positive"],
-                        COLORS["negative"],
-                        COLORS["neutral"],
-                    ],
-                    hole=0.4,
-                    textinfo="label+percent",
-                )
-            ])
+            fig = go.Figure(
+                data=[
+                    go.Pie(
+                        labels=["Positivo", "Negativo", "Neutral"],
+                        values=[
+                            kpis["pos_pct"] * 100,
+                            kpis["neg_pct"] * 100,
+                            kpis["neu_pct"] * 100,
+                        ],
+                        marker_colors=[
+                            COLORS["positive"],
+                            COLORS["negative"],
+                            COLORS["neutral"],
+                        ],
+                        hole=0.4,
+                        textinfo="label+percent",
+                    )
+                ]
+            )
             fig.update_layout(title="Distribución General de Sentimiento")
             st.plotly_chart(fig, use_container_width=True)
 
@@ -271,12 +274,14 @@ with tab1:
                 fig = go.Figure()
                 for col_name in ["positive", "negative", "neutral"]:
                     if col_name in team_sent.columns:
-                        fig.add_trace(go.Bar(
-                            name=col_name.capitalize(),
-                            x=team_sent.index,
-                            y=team_sent[col_name],
-                            marker_color=COLORS.get(col_name, "#999"),
-                        ))
+                        fig.add_trace(
+                            go.Bar(
+                                name=col_name.capitalize(),
+                                x=team_sent.index,
+                                y=team_sent[col_name],
+                                marker_color=COLORS.get(col_name, "#999"),
+                            )
+                        )
                 fig.update_layout(
                     title="Sentimiento por Selección",
                     barmode="group",
@@ -288,12 +293,7 @@ with tab1:
     # Topic overview
     if "topic_label" in df.columns:
         st.subheader("Temas Principales")
-        topic_counts = (
-            df["topic_label"]
-            .value_counts()
-            .head(8)
-            .reset_index()
-        )
+        topic_counts = df["topic_label"].value_counts().head(8).reset_index()
         topic_counts.columns = ["Tema", "Comentarios"]
         fig = px.bar(
             topic_counts,
@@ -322,7 +322,8 @@ with tab2:
     else:
         df_plot = df.copy()
         df_plot["date"] = pd.to_datetime(
-            df_plot["created_utc"], utc=True,
+            df_plot["created_utc"],
+            utc=True,
         ).dt.date
 
         team_for_plot = st.selectbox(
@@ -351,23 +352,27 @@ with tab2:
                 ("neutral", "neutral"),
             ]:
                 if col_name in daily.columns:
-                    fig.add_trace(go.Scatter(
-                        x=daily.index,
-                        y=daily[col_name],
-                        mode="lines",
-                        name=col_name.capitalize(),
-                        line=dict(color=COLORS[color_key], width=1),
-                        opacity=0.5,
-                    ))
+                    fig.add_trace(
+                        go.Scatter(
+                            x=daily.index,
+                            y=daily[col_name],
+                            mode="lines",
+                            name=col_name.capitalize(),
+                            line=dict(color=COLORS[color_key], width=1),
+                            opacity=0.5,
+                        )
+                    )
                     # 3-day rolling average
                     rolling = daily[col_name].rolling(3, min_periods=1).mean()
-                    fig.add_trace(go.Scatter(
-                        x=daily.index,
-                        y=rolling,
-                        mode="lines",
-                        name=f"{col_name.capitalize()} (media 3d)",
-                        line=dict(color=COLORS[color_key], width=2.5, dash="dot"),
-                    ))
+                    fig.add_trace(
+                        go.Scatter(
+                            x=daily.index,
+                            y=rolling,
+                            mode="lines",
+                            name=f"{col_name.capitalize()} (media 3d)",
+                            line=dict(color=COLORS[color_key], width=2.5, dash="dot"),
+                        )
+                    )
 
             # Match annotations
             matches_df = load_matches()
@@ -412,13 +417,15 @@ with tab3:
 
             fig = go.Figure()
             for _, row in radar_df.iterrows():
-                fig.add_trace(go.Scatterpolar(
-                    r=[row[m] for m in metrics],
-                    theta=metrics,
-                    fill="toself",
-                    name=row["teams"],
-                    line_color=TEAM_COLORS.get(row["teams"], "#3498DB"),
-                ))
+                fig.add_trace(
+                    go.Scatterpolar(
+                        r=[row[m] for m in metrics],
+                        theta=metrics,
+                        fill="toself",
+                        name=row["teams"],
+                        line_color=TEAM_COLORS.get(row["teams"], "#3498DB"),
+                    )
+                )
             fig.update_layout(
                 title="Perfil Comparativo por Selección",
                 polar=dict(radialaxis=dict(visible=True)),
@@ -435,12 +442,14 @@ with tab3:
         fig = go.Figure()
         for col_name in ["positive", "negative", "neutral"]:
             if col_name in team_sent.columns:
-                fig.add_trace(go.Bar(
-                    name=col_name.capitalize(),
-                    x=team_sent.index,
-                    y=team_sent[col_name],
-                    marker_color=COLORS[col_name],
-                ))
+                fig.add_trace(
+                    go.Bar(
+                        name=col_name.capitalize(),
+                        x=team_sent.index,
+                        y=team_sent[col_name],
+                        marker_color=COLORS[col_name],
+                    )
+                )
         fig.update_layout(
             barmode="group",
             xaxis_title="Selección",
@@ -479,11 +488,7 @@ with tab4:
         col_t1, col_t2 = st.columns([2, 1])
 
         with col_t1:
-            topic_counts = (
-                df["topic_label"]
-                .value_counts()
-                .reset_index()
-            )
+            topic_counts = df["topic_label"].value_counts().reset_index()
             topic_counts.columns = ["Tema", "Comentarios"]
 
             fig = px.bar(
@@ -521,7 +526,8 @@ with tab4:
             st.subheader("Evolución de Temas en el Tiempo")
             df_time = df.copy()
             df_time["date"] = pd.to_datetime(
-                df_time["created_utc"], utc=True,
+                df_time["created_utc"],
+                utc=True,
             ).dt.date
 
             topic_freq = (
@@ -531,10 +537,7 @@ with tab4:
             )
 
             top_topics = (
-                topic_freq.groupby("topic_label")["count"]
-                .sum()
-                .nlargest(6)
-                .index
+                topic_freq.groupby("topic_label")["count"].sum().nlargest(6).index
             )
             topic_freq = topic_freq[topic_freq["topic_label"].isin(top_topics)]
 
@@ -607,22 +610,26 @@ with tab5:
             if rdata.empty:
                 continue
 
-            fig.add_trace(go.Bar(
-                name=f"{result} (antes)",
-                x=[f"{result}"],
-                y=rdata["pre_pos_pct"],
-                marker_color=COLORS["positive"],
-                opacity=0.5,
-                legendgroup=result,
-            ))
-            fig.add_trace(go.Bar(
-                name=f"{result} (después)",
-                x=[f"{result}"],
-                y=rdata["post_pos_pct"],
-                marker_color=COLORS["positive"],
-                opacity=1.0,
-                legendgroup=result,
-            ))
+            fig.add_trace(
+                go.Bar(
+                    name=f"{result} (antes)",
+                    x=[f"{result}"],
+                    y=rdata["pre_pos_pct"],
+                    marker_color=COLORS["positive"],
+                    opacity=0.5,
+                    legendgroup=result,
+                )
+            )
+            fig.add_trace(
+                go.Bar(
+                    name=f"{result} (después)",
+                    x=[f"{result}"],
+                    y=rdata["post_pos_pct"],
+                    marker_color=COLORS["positive"],
+                    opacity=1.0,
+                    legendgroup=result,
+                )
+            )
 
         fig.update_layout(
             barmode="group",
@@ -635,17 +642,23 @@ with tab5:
         # Detailed table
         st.subheader("Resultados Detallados")
         display_cols = [
-            "team", "result", "n_pre", "n_post",
-            "pre_pos_pct", "post_pos_pct",
-            "pre_neg_pct", "post_neg_pct",
-            "p_value", "significant",
+            "team",
+            "result",
+            "n_pre",
+            "n_post",
+            "pre_pos_pct",
+            "post_pos_pct",
+            "pre_neg_pct",
+            "post_neg_pct",
+            "p_value",
+            "significant",
         ]
         display_cols = [c for c in display_cols if c in team_data.columns]
         st.dataframe(
             team_data[display_cols].style.applymap(
-                lambda x: "background-color: #d4edda" if x is True else (
-                    "background-color: #f8d7da" if x is False else ""
-                ),
+                lambda x: "background-color: #d4edda"
+                if x is True
+                else ("background-color: #f8d7da" if x is False else ""),
                 subset=["significant"],
             ),
             use_container_width=True,
@@ -654,7 +667,7 @@ with tab5:
         # Interpretation
         st.markdown("---")
         st.subheader("Interpretación")
-        sig_results = shift_df[shift_df["significant"] == True]
+        sig_results = shift_df[shift_df["significant"]]
         if not sig_results.empty:
             st.success(
                 "Se detectaron cambios estadísticamente significativos "
@@ -662,8 +675,7 @@ with tab5:
             )
             for _, row in sig_results.iterrows():
                 direction = (
-                    "mejoró" if row["post_pos_pct"] > row["pre_pos_pct"]
-                    else "empeoró"
+                    "mejoró" if row["post_pos_pct"] > row["pre_pos_pct"] else "empeoró"
                 )
                 st.markdown(
                     f"- **{row['team']}** tras {row['result']}: "

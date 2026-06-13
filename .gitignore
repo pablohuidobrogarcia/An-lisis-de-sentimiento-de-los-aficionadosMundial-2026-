@@ -23,7 +23,8 @@ build/
 data/raw/*
 data/processed/*
 !data/raw/.gitkeep
-!data/raw/.checkpoints/
+data/raw/.checkpoints/*
+!data/raw/.checkpoints/.gitkeep
 !data/processed/.gitkeep
 
 # ── Models ───────────────────────────────────────────────────────────────────

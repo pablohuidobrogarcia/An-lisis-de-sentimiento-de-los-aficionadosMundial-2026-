@@ -23,13 +23,10 @@ unified ``(label, scores_dict)`` result. The pipeline handles the model
 dispatch internally.
 """
 
-import logging
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List
 
 import pandas as pd
-from scipy.special import softmax
 
-from src.config import SENTIMENT_COLUMNS
 from src.utils import setup_logger
 
 logger = setup_logger(__name__)
@@ -42,20 +39,75 @@ _VADER = None
 # Spanish polarity lexicon (curated subset for social-media football context)
 # Based on NRC-EmoLex Spanish translation
 _POSITIVE_WORDS_ES: set = {
-    "bueno", "excelente", "increíble", "genial", "fantástico", "maravilloso",
-    "espectacular", "brillante", "magnífico", "extraordinario", "perfecto",
-    "impresionante", "emocionante", "alegre", "feliz", "contento", "orgulloso",
-    "victoria", "triunfo", "gol", "golazo", "olé", "vamos", "sí",
-    "mejor", "grande", "histórico", "leyenda", "crack", "fenómeno",
-    "esperanza", "ilusionado", "optimista", "confianza",
+    "bueno",
+    "excelente",
+    "increíble",
+    "genial",
+    "fantástico",
+    "maravilloso",
+    "espectacular",
+    "brillante",
+    "magnífico",
+    "extraordinario",
+    "perfecto",
+    "impresionante",
+    "emocionante",
+    "alegre",
+    "feliz",
+    "contento",
+    "orgulloso",
+    "victoria",
+    "triunfo",
+    "gol",
+    "golazo",
+    "olé",
+    "vamos",
+    "sí",
+    "mejor",
+    "grande",
+    "histórico",
+    "leyenda",
+    "crack",
+    "fenómeno",
+    "esperanza",
+    "ilusionado",
+    "optimista",
+    "confianza",
 }
 _NEGATIVE_WORDS_ES: set = {
-    "malo", "pésimo", "horrible", "terrible", "decepcionante", "frustrante",
-    "vergonzoso", "ridículo", "lamentable", "penoso", "patético", "nefasto",
-    "fracaso", "derrota", "perder", "perdió", "eliminado", "peor",
-    "triste", "enfadado", "enojado", "furioso", "decepcionado",
-    "arbitro", "robo", "injusticia", "penal", "expulsión", "lesión",
-    "vergüenza", "asqueroso", "insulto", "bochornoso",
+    "malo",
+    "pésimo",
+    "horrible",
+    "terrible",
+    "decepcionante",
+    "frustrante",
+    "vergonzoso",
+    "ridículo",
+    "lamentable",
+    "penoso",
+    "patético",
+    "nefasto",
+    "fracaso",
+    "derrota",
+    "perder",
+    "perdió",
+    "eliminado",
+    "peor",
+    "triste",
+    "enfadado",
+    "enojado",
+    "furioso",
+    "decepcionado",
+    "arbitro",
+    "robo",
+    "injusticia",
+    "penal",
+    "expulsión",
+    "lesión",
+    "vergüenza",
+    "asqueroso",
+    "insulto",
+    "bochornoso",
 }
 
 
@@ -64,6 +116,7 @@ def _get_pysentimiento():
     if _PYSENTIMIENTO is None:
         try:
             from pysentimiento import create_analyzer
+
             _PYSENTIMIENTO = create_analyzer(task="sentiment", lang="es")
             logger.info("pysentimiento analyzer loaded")
         except Exception as exc:
@@ -76,6 +129,7 @@ def _get_roberta():
     if _HF_ROBERTA is None:
         try:
             from transformers import pipeline
+
             _HF_ROBERTA = pipeline(
                 "sentiment-analysis",
                 model="cardiffnlp/twitter-roberta-base-sentiment",
@@ -94,8 +148,9 @@ def _get_vader():
     global _VADER
     if _VADER is None:
         try:
-            from nltk.sentiment.vader import SentimentIntensityAnalyzer
             import nltk
+            from nltk.sentiment.vader import SentimentIntensityAnalyzer
+
             try:
                 _VADER = SentimentIntensityAnalyzer()
             except LookupError:
@@ -175,9 +230,17 @@ def _predict_vader(text: str) -> Dict[str, float]:
 
     compound = scores["compound"]
     if compound >= 0.05:
-        return {"positive": abs(compound), "negative": 0.0, "neutral": 1 - abs(compound)}
+        return {
+            "positive": abs(compound),
+            "negative": 0.0,
+            "neutral": 1 - abs(compound),
+        }
     elif compound <= -0.05:
-        return {"positive": 0.0, "negative": abs(compound), "neutral": 1 - abs(compound)}
+        return {
+            "positive": 0.0,
+            "negative": abs(compound),
+            "neutral": 1 - abs(compound),
+        }
     else:
         return {"positive": 0.0, "negative": 0.0, "neutral": 1.0}
 
@@ -250,28 +313,32 @@ def predict_batch(
             scores = predict_sentiment(text, lang, model=model)
             trans = scores["transformer"]
             base = scores["baseline"]
-            records.append({
-                "sentiment_label": max(trans, key=trans.get),
-                "sentiment_positive": trans["positive"],
-                "sentiment_negative": trans["negative"],
-                "sentiment_neutral": trans["neutral"],
-                "sentiment_baseline_label": max(base, key=base.get),
-                "sentiment_baseline_positive": base["positive"],
-                "sentiment_baseline_negative": base["negative"],
-                "sentiment_baseline_neutral": base["neutral"],
-            })
+            records.append(
+                {
+                    "sentiment_label": max(trans, key=trans.get),
+                    "sentiment_positive": trans["positive"],
+                    "sentiment_negative": trans["negative"],
+                    "sentiment_neutral": trans["neutral"],
+                    "sentiment_baseline_label": max(base, key=base.get),
+                    "sentiment_baseline_positive": base["positive"],
+                    "sentiment_baseline_negative": base["negative"],
+                    "sentiment_baseline_neutral": base["neutral"],
+                }
+            )
         except Exception as exc:
             logger.warning("Sentiment prediction failed for text: %s", exc)
-            records.append({
-                "sentiment_label": "error",
-                "sentiment_positive": 0.0,
-                "sentiment_negative": 0.0,
-                "sentiment_neutral": 0.0,
-                "sentiment_baseline_label": "error",
-                "sentiment_baseline_positive": 0.0,
-                "sentiment_baseline_negative": 0.0,
-                "sentiment_baseline_neutral": 0.0,
-            })
+            records.append(
+                {
+                    "sentiment_label": "error",
+                    "sentiment_positive": 0.0,
+                    "sentiment_negative": 0.0,
+                    "sentiment_neutral": 0.0,
+                    "sentiment_baseline_label": "error",
+                    "sentiment_baseline_positive": 0.0,
+                    "sentiment_baseline_negative": 0.0,
+                    "sentiment_baseline_neutral": 0.0,
+                }
+            )
 
     return pd.DataFrame(records)
 
@@ -298,7 +365,8 @@ def add_sentiment_to_dataframe(
 
     logger.info(
         "Running sentiment analysis on %d comments (model=%s) …",
-        len(df), model,
+        len(df),
+        model,
     )
     sentiment_df = predict_batch(
         df[text_column].tolist(),
@@ -311,4 +379,3 @@ def add_sentiment_to_dataframe(
     )
     logger.info("Sentiment analysis complete.")
     return result
-

@@ -20,6 +20,7 @@ _env_path = Path(__file__).resolve().parent.parent / ".env"
 if _env_path.exists():
     try:
         from dotenv import load_dotenv
+
         load_dotenv(str(_env_path))
     except ImportError:
         pass  # dotenv not installed; rely on env vars or defaults
@@ -73,11 +74,11 @@ YOUTUBE_SEARCH_TEMPLATES: List[str] = [
 
 # ── Keywords that indicate a team mention (for cross-team detection) ───────
 TEAM_KEYWORDS: Dict[str, List[str]] = {
-    "Spain":    ["spain", "españa", "espan", "la roja", "selección española"],
-    "Argentina":["argentina", "albiceleste", "scaloneta", "mesi", "messi"],
-    "Brazil":   ["brazil", "brasil", "seleção", "canarinho", "vinicius", "neymar"],
-    "France":   ["france", "francia", "les bleus", "mbappe", "griezmann"],
-    "England":  ["england", "inglaterra", "three lions", "kane", "bellingham"],
+    "Spain": ["spain", "españa", "espan", "la roja", "selección española"],
+    "Argentina": ["argentina", "albiceleste", "scaloneta", "mesi", "messi"],
+    "Brazil": ["brazil", "brasil", "seleção", "canarinho", "vinicius", "neymar"],
+    "France": ["france", "francia", "les bleus", "mbappe", "griezmann"],
+    "England": ["england", "inglaterra", "three lions", "kane", "bellingham"],
 }
 
 # ── football-data.org API ───────────────────────────────────────────────────
@@ -108,7 +109,109 @@ SENTIMENT_COLUMNS: Dict[str, str] = {
 MATCH_PRE_WINDOW_HOURS: int = 24
 MATCH_POST_WINDOW_HOURS: int = 24
 
+# ── Team name aliases for video relevance checking ──────────────────────────
+TEAM_ALIASES: Dict[str, List[str]] = {
+    "Spain": ["spain", "españa", "espania"],
+    "Argentina": ["argentina"],
+    "Brazil": ["brazil", "brasil"],
+    "France": ["france", "francia"],
+    "England": ["england", "inglaterra"],
+    "Mexico": ["mexico", "méxico"],
+    "South Africa": ["south africa", "sudáfrica", "sudafrica"],
+    "Cape Verde Islands": ["cape verde", "cabo verde", "cape verde islands"],
+    "Morocco": ["morocco", "marruecos"],
+    "Senegal": ["senegal"],
+    "Algeria": ["algeria", "argelia"],
+    "Croatia": ["croatia", "croacia"],
+    "Ghana": ["ghana"],
+    "South Korea": ["south korea", "korea republic", "corea del sur", "korea"],
+    "Czechia": ["czechia", "czech republic", "república checa", "chequia"],
+    "Bosnia-Herzegovina": ["bosnia", "bosnia-herzegovina"],
+    "Canada": ["canada", "canadá"],
+    "United States": ["united states", "usa", "eeuu", "estados unidos"],
+    "Paraguay": ["paraguay"],
+    "Qatar": ["qatar", "catar"],
+    "Switzerland": ["switzerland", "suiza", "suiza"],
+    "Haiti": ["haiti", "haití"],
+    "Scotland": ["scotland", "escocia"],
+    "Australia": ["australia"],
+    "Turkey": ["turkey", "turquía"],
+    "Germany": ["germany", "alemania"],
+    "Curacao": ["curaçao", "curacao"],
+    "Netherlands": ["netherlands", "holanda", "países bajos"],
+    "Japan": ["japan", "japón"],
+    "Ivory Coast": ["ivory coast", "côte d'ivoire", "costa de marfil"],
+    "Ecuador": ["ecuador"],
+    "Sweden": ["sweden", "suecia"],
+    "Tunisia": ["tunisia", "túnez"],
+    "Belgium": ["belgium", "bélgica"],
+    "Egypt": ["egypt", "egipto"],
+    "Saudi Arabia": ["saudi arabia", "arabia saudí"],
+    "Uruguay": ["uruguay"],
+    "Iran": ["iran", "irán"],
+    "New Zealand": ["new zealand", "nueva zelanda"],
+    "Iraq": ["iraq", "irak"],
+    "Norway": ["norway", "noruega"],
+    "Austria": ["austria"],
+    "Jordan": ["jordan", "jordania"],
+    "Portugal": ["portugal"],
+    "Congo DR": ["congo", "dr congo"],
+    "Uzbekistan": ["uzbekistan", "uzbekistán"],
+    "Colombia": ["colombia"],
+    "Panama": ["panamá", "panama"],
+}
+
+FOOTBALL_KEYWORDS: List[str] = [
+    "world cup",
+    "mundial",
+    "highlights",
+    "resumen",
+    "goals",
+    "goles",
+    "match",
+    "partido",
+    "fifa",
+    "full match",
+    "full game",
+    "partido completo",
+    "recap",
+    "debut",
+    "opening",
+    "inaugural",
+    "winner",
+    "win",
+    "victory",
+    "victoria",
+    "goal",
+    "gol",
+    "score",
+    "resultado",
+]
+
+# ── Spam / bot pattern detection ────────────────────────────────────────────
+SPAM_PHRASES: List[str] = [
+    "deserves more views",
+    "learned a lot",
+    "explanation is exactly what i needed",
+    "editing is outstanding",
+    "clear and easy to follow",
+    "subscribe to my channel",
+    "subscribe to my",
+    "check out my channel",
+    "great content",
+    "amazing content",
+    "underrated video",
+    "underrated channel",
+    "why is this not viral",
+    "this should go viral",
+    "keep up the good work",
+    "very informative video",
+    "well explained",
+    "nice video",
+]
+
+SHORT_COMMENT_MIN_WORDS: int = 3
+
 # ── Evaluation ──────────────────────────────────────────────────────────────
 EVAL_SAMPLE_SIZE: int = 150
 EVAL_OUTPUT_FILE: str = "evaluation/manual_labels.csv"
-

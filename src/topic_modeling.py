@@ -15,7 +15,6 @@ Overview
   match dates.
 """
 
-import json
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
@@ -23,13 +22,12 @@ import pandas as pd
 from sklearn.feature_extraction.text import CountVectorizer
 
 from src.config import (
-    PROCESSED_DIR,
     SPACY_MODELS,
     TOPIC_EMBEDDING_MODEL,
     TOPIC_MAX_TOPICS,
     TOPIC_MIN_TOPICS,
 )
-from src.utils import setup_logger, save_dataframe, load_dataframe
+from src.utils import setup_logger
 
 logger = setup_logger(__name__)
 
@@ -41,46 +39,113 @@ _NLP_PIPELINES: Dict[str, Any] = {}
 # Organised by team for easy extension.
 KNOWN_PLAYERS: Dict[str, List[str]] = {
     "Spain": [
-        "Pedri", "Gavi", "Lamine Yamal", "Nico Williams", "Rodri",
-        "Unai Simón", "Dani Carvajal", "Aymeric Laporte", "Álvaro Morata",
-        "Fermín López", "Mikel Merino", "Dani Olmo",
+        "Pedri",
+        "Gavi",
+        "Lamine Yamal",
+        "Nico Williams",
+        "Rodri",
+        "Unai Simón",
+        "Dani Carvajal",
+        "Aymeric Laporte",
+        "Álvaro Morata",
+        "Fermín López",
+        "Mikel Merino",
+        "Dani Olmo",
     ],
     "Argentina": [
-        "Lionel Messi", "Ángel Di María", "Julián Álvarez", "Enzo Fernández",
-        "Alexis Mac Allister", "Lautaro Martínez", "Emiliano Martínez",
-        "Nicolás Otamendi", "Cristian Romero", "Rodrigo De Paul",
-        "Leandro Paredes", "Nahuel Molina",
+        "Lionel Messi",
+        "Ángel Di María",
+        "Julián Álvarez",
+        "Enzo Fernández",
+        "Alexis Mac Allister",
+        "Lautaro Martínez",
+        "Emiliano Martínez",
+        "Nicolás Otamendi",
+        "Cristian Romero",
+        "Rodrigo De Paul",
+        "Leandro Paredes",
+        "Nahuel Molina",
     ],
     "Brazil": [
-        "Neymar", "Vinícius Jr", "Rodrygo", "Endrick", "Raphinha",
-        "Casemiro", "Marquinhos", "Alisson", "Gabriel Martinelli",
-        "Bruno Guimarães", "João Pedro", "Lucas Paquetá",
+        "Neymar",
+        "Vinícius Jr",
+        "Rodrygo",
+        "Endrick",
+        "Raphinha",
+        "Casemiro",
+        "Marquinhos",
+        "Alisson",
+        "Gabriel Martinelli",
+        "Bruno Guimarães",
+        "João Pedro",
+        "Lucas Paquetá",
     ],
     "France": [
-        "Kylian Mbappé", "Antoine Griezmann", "Eduardo Camavinga",
-        "Aurélien Tchouaméni", "Mike Maignan", "Dayot Upamecano",
-        "Ousmane Dembélé", "Randal Kolo Muani", "Olivier Giroud",
-        "Theo Hernández", "Jules Koundé", "Adrien Rabiot",
+        "Kylian Mbappé",
+        "Antoine Griezmann",
+        "Eduardo Camavinga",
+        "Aurélien Tchouaméni",
+        "Mike Maignan",
+        "Dayot Upamecano",
+        "Ousmane Dembélé",
+        "Randal Kolo Muani",
+        "Olivier Giroud",
+        "Theo Hernández",
+        "Jules Koundé",
+        "Adrien Rabiot",
     ],
     "England": [
-        "Harry Kane", "Jude Bellingham", "Bukayo Saka", "Declan Rice",
-        "Phil Foden", "Mason Mount", "Jack Grealish", "Marcus Rashford",
-        "Jordan Pickford", "Kyle Walker", "John Stones", "Cole Palmer",
+        "Harry Kane",
+        "Jude Bellingham",
+        "Bukayo Saka",
+        "Declan Rice",
+        "Phil Foden",
+        "Mason Mount",
+        "Jack Grealish",
+        "Marcus Rashford",
+        "Jordan Pickford",
+        "Kyle Walker",
+        "John Stones",
+        "Cole Palmer",
     ],
 }
 
 KNOWN_BRANDS: List[str] = [
-    "Coca-Cola", "McDonald's", "Adidas", "Nike", "Puma", "Qatar Airways",
-    "Visa", "Hyundai", "Kia", "Budweiser", "AB InBev", "Wanda Group",
-    "Hisense", "Mengniu", "Globant", "Mountain Dew",
+    "Coca-Cola",
+    "McDonald's",
+    "Adidas",
+    "Nike",
+    "Puma",
+    "Qatar Airways",
+    "Visa",
+    "Hyundai",
+    "Kia",
+    "Budweiser",
+    "AB InBev",
+    "Wanda Group",
+    "Hisense",
+    "Mengniu",
+    "Globant",
+    "Mountain Dew",
 ]
 
 KNOWN_VENUES: List[str] = [
-    "MetLife Stadium", "AT&T Stadium", "SoFi Stadium", "Arrowhead Stadium",
-    "NRG Stadium", "Mercedes-Benz Stadium", "Levi's Stadium",
-    "Gillette Stadium", "Hard Rock Stadium", "Allegiant Stadium",
-    "Lincoln Financial Field", "Estadio Azteca", "Estadio Akron",
-    "Estadio BBVA", "BC Place", "BMO Field",
+    "MetLife Stadium",
+    "AT&T Stadium",
+    "SoFi Stadium",
+    "Arrowhead Stadium",
+    "NRG Stadium",
+    "Mercedes-Benz Stadium",
+    "Levi's Stadium",
+    "Gillette Stadium",
+    "Hard Rock Stadium",
+    "Allegiant Stadium",
+    "Lincoln Financial Field",
+    "Estadio Azteca",
+    "Estadio Akron",
+    "Estadio BBVA",
+    "BC Place",
+    "BMO Field",
 ]
 
 _ALL_KNOWN_ENTITIES: List[str] = (
@@ -101,12 +166,15 @@ def _get_spacy(language: str):
         model_name = SPACY_MODELS.get(language, "en_core_web_sm")
         try:
             import spacy
+
             _NLP_PIPELINES[language] = spacy.load(model_name)
             logger.info("spaCy model '%s' loaded", model_name)
         except OSError:
             logger.warning(
                 "spaCy model '%s' not found. Install with: "
-                "python -m spacy download %s", model_name, model_name,
+                "python -m spacy download %s",
+                model_name,
+                model_name,
             )
             _NLP_PIPELINES[language] = None
     return _NLP_PIPELINES[language]
@@ -168,24 +236,28 @@ def extract_entities(
         doc = nlp(text[:1_000_000])  # cap to avoid memory issues
         for ent in doc.ents:
             if ent.label_ in ("PER", "PERSON", "ORG", "GPE", "LOC", "MISC"):
-                result["spacy"].append({
-                    "text": ent.text,
-                    "label": ent.label_,
-                    "start": ent.start_char,
-                    "end": ent.end_char,
-                })
+                result["spacy"].append(
+                    {
+                        "text": ent.text,
+                        "label": ent.label_,
+                        "start": ent.start_char,
+                        "end": ent.end_char,
+                    }
+                )
 
     if use_custom_dict:
         text_lower = text.lower()
         for entity in _ALL_KNOWN_ENTITIES:
             if entity.lower() in text_lower:
                 idx = text_lower.index(entity.lower())
-                result["custom"].append({
-                    "text": entity,
-                    "label": "KNOWN_ENTITY",
-                    "start": idx,
-                    "end": idx + len(entity),
-                })
+                result["custom"].append(
+                    {
+                        "text": entity,
+                        "label": "KNOWN_ENTITY",
+                        "start": idx,
+                        "end": idx + len(entity),
+                    }
+                )
 
     return result
 
@@ -231,13 +303,17 @@ def add_entities_to_dataframe(
         all_custom.append(custom_texts)
 
         # Find known players / brands in custom matches
-        pl = [e for e in custom_texts if any(
-            e.lower() in [p.lower() for p in players_list]
-            for players_list in KNOWN_PLAYERS.values()
-        )]
-        br = [e for e in custom_texts if any(
-            e.lower() == b.lower() for b in KNOWN_BRANDS
-        )]
+        pl = [
+            e
+            for e in custom_texts
+            if any(
+                e.lower() in [p.lower() for p in players_list]
+                for players_list in KNOWN_PLAYERS.values()
+            )
+        ]
+        br = [
+            e for e in custom_texts if any(e.lower() == b.lower() for b in KNOWN_BRANDS)
+        ]
         players_found.append(",".join(pl))
         brands_found.append(",".join(br))
 
@@ -271,7 +347,9 @@ def fit_topic_model(
     model = _get_bertopic()
     logger.info("Fitting BERTopic on %d documents …", len(texts))
     topics, probs = model.fit_transform(texts, **fit_kwargs)
-    logger.info("BERTopic fitted: %d topics found", len(set(topics)) - 1)  # -1 for outliers
+    logger.info(
+        "BERTopic fitted: %d topics found", len(set(topics)) - 1
+    )  # -1 for outliers
 
     if save_path:
         model.save(str(save_path), serialization="safetensors")
@@ -283,6 +361,7 @@ def fit_topic_model(
 def get_topic_info(model) -> pd.DataFrame:
     """Return a DataFrame with topic name, size, and representative words."""
     info = model.get_topic_info()
+
     # Add human-readable labels
     def _label(row: Any) -> str:
         if row["Topic"] == -1:
@@ -314,7 +393,8 @@ def topics_over_time(
     """
     try:
         topics_over_time_df = model.topics_over_time(
-            texts, timestamps,
+            texts,
+            timestamps,
             global_tuning=True,
             evolution_tuning=True,
         )
@@ -347,17 +427,11 @@ def add_topics_to_dataframe(
         logger.warning("No texts available for topic modeling.")
         return df, None
 
-    dates = pd.to_datetime(
-        df[date_column].dropna(), utc=True, errors="coerce",
-    ).tolist()
-
     model = fit_topic_model(texts, save_path=model_save_path)
-    topics = model.topics_[:len(df)]  # align with original DF
+    topics = model.topics_[: len(df)]  # align with original DF
 
     topic_info = get_topic_info(model)
-    topic_map = dict(
-        zip(topic_info["Topic"], topic_info["topic_label"])
-    )
+    topic_map = dict(zip(topic_info["Topic"], topic_info["topic_label"]))
 
     df = df.copy()
     df["topic"] = topics
@@ -365,4 +439,3 @@ def add_topics_to_dataframe(
 
     logger.info("Topics assigned to %d documents", len(df))
     return df, model
-

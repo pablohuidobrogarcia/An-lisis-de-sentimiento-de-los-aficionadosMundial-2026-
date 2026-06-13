@@ -7,8 +7,8 @@ testing.
 """
 
 import time
-from datetime import datetime, timedelta, timezone
-from typing import Any, Dict, List, Optional, Tuple
+from datetime import timedelta
+from typing import Any, Dict, List, Optional
 
 import pandas as pd
 import requests
@@ -24,7 +24,7 @@ from src.config import (
     PROCESSED_DIR,
     TARGET_TEAMS,
 )
-from src.utils import setup_logger, save_dataframe, load_dataframe, save_json, load_json
+from src.utils import load_json, save_dataframe, save_json, setup_logger
 
 logger = setup_logger(__name__)
 
@@ -88,9 +88,12 @@ def fetch_matches(
 
     season = season_year or 2026
     try:
-        data = _api_get(f"competitions/{competition_code}/matches", {
-            "season": season,
-        })
+        data = _api_get(
+            f"competitions/{competition_code}/matches",
+            {
+                "season": season,
+            },
+        )
         matches = data.get("matches", [])
         save_json(matches, FIXTURES_CACHE_FILE)
         logger.info("Fetched %d matches from API", len(matches))
@@ -113,18 +116,20 @@ def matches_to_dataframe(matches: List[Dict]) -> pd.DataFrame:
     """
     records = []
     for m in matches:
-        records.append({
-            "match_id": m.get("id"),
-            "utc_date": m.get("utcDate"),
-            "status": m.get("status", "SCHEDULED"),
-            "stage": m.get("stage", ""),
-            "group": m.get("group", ""),
-            "home_team": (m.get("homeTeam") or {}).get("name", ""),
-            "away_team": (m.get("awayTeam") or {}).get("name", ""),
-            "home_score": (m.get("score", {}).get("fullTime") or {}).get("home"),
-            "away_score": (m.get("score", {}).get("fullTime") or {}).get("away"),
-            "winner": m.get("score", {}).get("winner"),
-        })
+        records.append(
+            {
+                "match_id": m.get("id"),
+                "utc_date": m.get("utcDate"),
+                "status": m.get("status", "SCHEDULED"),
+                "stage": m.get("stage", ""),
+                "group": m.get("group", ""),
+                "home_team": (m.get("homeTeam") or {}).get("name", ""),
+                "away_team": (m.get("awayTeam") or {}).get("name", ""),
+                "home_score": (m.get("score", {}).get("fullTime") or {}).get("home"),
+                "away_score": (m.get("score", {}).get("fullTime") or {}).get("away"),
+                "winner": m.get("score", {}).get("winner"),
+            }
+        )
 
     df = pd.DataFrame(records)
     df["utc_date"] = pd.to_datetime(df["utc_date"], utc=True, errors="coerce")
@@ -217,12 +222,18 @@ def assign_matches_to_comments(
             # Find comments mentioning this team and within the window
             mask = (
                 comments_df[team_column].str.contains(
-                    team, case=False, na=False,
+                    team,
+                    case=False,
+                    na=False,
                 )
-                & (pd.to_datetime(comments_df[date_column], utc=True, errors="coerce")
-                   >= window_start)
-                & (pd.to_datetime(comments_df[date_column], utc=True, errors="coerce")
-                   <= window_end)
+                & (
+                    pd.to_datetime(comments_df[date_column], utc=True, errors="coerce")
+                    >= window_start
+                )
+                & (
+                    pd.to_datetime(comments_df[date_column], utc=True, errors="coerce")
+                    <= window_end
+                )
                 & comments_df["_match_id"].isna()
             )
 
@@ -277,11 +288,14 @@ def compute_sentiment_shift(
     # Map sentiment label to numeric score
     sentiment_map = {"positive": 2, "neutral": 1, "negative": 0}
     df = df.copy()
-    df["_sentiment_score"] = df[sentiment_column].map(
-        sentiment_map,
-    ).fillna(1)
+    df["_sentiment_score"] = (
+        df[sentiment_column]
+        .map(
+            sentiment_map,
+        )
+        .fillna(1)
+    )
 
-    teams = df[df["_match_id"].notna()]["teams"].unique()
     results_list = []
 
     for team in TARGET_TEAMS:
@@ -305,7 +319,9 @@ def compute_sentiment_shift(
             # Mann-Whitney U test
             try:
                 _, p_value = mannwhitneyu(
-                    pre_scores, post_scores, alternative="two-sided",
+                    pre_scores,
+                    post_scores,
+                    alternative="two-sided",
                 )
             except ValueError:
                 p_value = 1.0
@@ -315,18 +331,20 @@ def compute_sentiment_shift(
             pre_neg_pct = (pre_df[sentiment_column] == "negative").mean()
             post_neg_pct = (post_df[sentiment_column] == "negative").mean()
 
-            results_list.append({
-                "team": team,
-                "result": result,
-                "n_pre": len(pre_df),
-                "n_post": len(post_df),
-                "pre_pos_pct": round(pre_pos_pct, 3),
-                "post_pos_pct": round(post_pos_pct, 3),
-                "pre_neg_pct": round(pre_neg_pct, 3),
-                "post_neg_pct": round(post_neg_pct, 3),
-                "p_value": round(p_value, 4),
-                "significant": p_value < 0.05,
-            })
+            results_list.append(
+                {
+                    "team": team,
+                    "result": result,
+                    "n_pre": len(pre_df),
+                    "n_post": len(post_df),
+                    "pre_pos_pct": round(pre_pos_pct, 3),
+                    "post_pos_pct": round(post_pos_pct, 3),
+                    "pre_neg_pct": round(pre_neg_pct, 3),
+                    "post_neg_pct": round(post_neg_pct, 3),
+                    "p_value": round(p_value, 4),
+                    "significant": p_value < 0.05,
+                }
+            )
 
     return pd.DataFrame(results_list)
 
@@ -354,4 +372,3 @@ def save_and_return_results(
     )
     logger.info("Match-integrated results saved.")
     return shift_df
-
