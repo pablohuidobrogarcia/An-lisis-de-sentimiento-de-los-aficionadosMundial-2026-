@@ -3,41 +3,84 @@ Unified sentiment analysis pipeline supporting Spanish and English.
 
 Architecture
 ------------
-- **Primary model** (ES): ``pysentimiento`` BERT-based classifier, fine-tuned
-  on Spanish social-media text (``pysentimiento/bert-base-spanish-wwm-uncased``).
-- **Primary model** (EN): ``cardiffnlp/twitter-roberta-base-sentiment`` via the
-  HuggingFace ``transformers`` pipeline, the de-facto standard for English
-  social-media sentiment.
-- **Baseline** (EN): VADER — a lexicon/rule-based model. Fast, interpretable,
-  but misses sarcasm and context.
+- **Primary model** (ES + EN): ``pysentimiento`` BERT-based classifiers,
+  fine-tuned on social-media text. Single dependency for both languages.
+  *Rationale*: pysentimiento 0.7+ includes both Spanish (``pysentimiento/
+  bert-base-spanish-wwm-uncased``) and English (``cardiffnlp/twitter-
+  roberta-base-sentiment``) models under a unified API. Using the same
+  library for both languages avoids maintaining separate model-loading
+  paths and enables consistent batch inference.
+- **Baseline** (EN): VADER — a lexicon/rule-based model. Fast,
+  interpretable, but misses sarcasm and context.
 - **Baseline** (ES): A Spanish polarity-lexicon approach using a simple
-  word-count of positive/negative terms from the NRC-EmoLex translated list.
-  *Justification*: VADER is English-only. TextBlob-es is unmaintained and
-  unreliable for social-media text. A polarity-lexicon baseline is transparent
-  and sufficient for comparison.
+  word-count of positive/negative terms from the NRC-EmoLex translated
+  list. *Justification*: VADER is English-only. TextBlob-es is
+  unmaintained and unreliable for social-media text. A polarity-lexicon
+  baseline is transparent and sufficient for comparison.
 
 Usage
 -----
-Call :func:`predict_sentiment` with the text and its language code to get a
-unified ``(label, scores_dict)`` result. The pipeline handles the model
+Call :func:`predict_sentiment` with the text and its language code to get
+a unified ``(label, scores_dict)`` result. The pipeline handles the model
 dispatch internally.
 """
 
 from typing import Dict, List
 
 import pandas as pd
+from tqdm.auto import tqdm
 
 from src.utils import setup_logger
 
 logger = setup_logger(__name__)
 
-# ── Lazy-loaded model singletons ──────────────────────────────────────────
-_PYSENTIMIENTO = None
-_HF_ROBERTA = None
+# ── Lazy-loaded model singletons (per language) ────────────────────────────
+_PYSENTIMIENTO: Dict[str, object] = {}
 _VADER = None
 
-# Spanish polarity lexicon (curated subset for social-media football context)
-# Based on NRC-EmoLex Spanish translation
+
+def _get_pysentimiento(lang: str):
+    """Return or create a pysentimiento analyzer for *lang*.
+
+    Args:
+        lang: ``"es"`` or ``"en"``.
+
+    Returns:
+        Analyzer instance, or ``None`` on failure.
+    """
+    global _PYSENTIMIENTO
+    if lang not in _PYSENTIMIENTO:
+        try:
+            from pysentimiento import create_analyzer
+
+            _PYSENTIMIENTO[lang] = create_analyzer(task="sentiment", lang=lang)
+            logger.info("pysentimiento analyzer loaded for lang=%s", lang)
+        except Exception as exc:
+            logger.warning("pysentimiento unavailable for lang=%s: %s", lang, exc)
+            _PYSENTIMIENTO[lang] = None
+    return _PYSENTIMIENTO[lang]
+
+
+def _get_vader():
+    global _VADER
+    if _VADER is None:
+        try:
+            import nltk
+            from nltk.sentiment.vader import SentimentIntensityAnalyzer
+
+            try:
+                _VADER = SentimentIntensityAnalyzer()
+            except LookupError:
+                nltk.download("vader_lexicon")
+                _VADER = SentimentIntensityAnalyzer()
+            logger.info("VADER model loaded")
+        except Exception as exc:
+            logger.warning("VADER unavailable: %s", exc)
+    return _VADER
+
+
+# ── Spanish polarity lexicon ───────────────────────────────────────────────
+# Based on NRC-EmoLex Spanish translation, curated for football context
 _POSITIVE_WORDS_ES: set = {
     "bueno",
     "excelente",
@@ -111,90 +154,13 @@ _NEGATIVE_WORDS_ES: set = {
 }
 
 
-def _get_pysentimiento():
-    global _PYSENTIMIENTO
-    if _PYSENTIMIENTO is None:
-        try:
-            from pysentimiento import create_analyzer
-
-            _PYSENTIMIENTO = create_analyzer(task="sentiment", lang="es")
-            logger.info("pysentimiento analyzer loaded")
-        except Exception as exc:
-            logger.warning("pysentimiento unavailable: %s", exc)
-    return _PYSENTIMIENTO
+# ── Individual prediction helpers ──────────────────────────────────────────
 
 
-def _get_roberta():
-    global _HF_ROBERTA
-    if _HF_ROBERTA is None:
-        try:
-            from transformers import pipeline
-
-            _HF_ROBERTA = pipeline(
-                "sentiment-analysis",
-                model="cardiffnlp/twitter-roberta-base-sentiment",
-                tokenizer="cardiffnlp/twitter-roberta-base-sentiment",
-                return_all_scores=True,
-                max_length=512,
-                truncation=True,
-            )
-            logger.info("HuggingFace RoBERTa model loaded")
-        except Exception as exc:
-            logger.warning("HuggingFace RoBERTa unavailable: %s", exc)
-    return _HF_ROBERTA
-
-
-def _get_vader():
-    global _VADER
-    if _VADER is None:
-        try:
-            import nltk
-            from nltk.sentiment.vader import SentimentIntensityAnalyzer
-
-            try:
-                _VADER = SentimentIntensityAnalyzer()
-            except LookupError:
-                nltk.download("vader_lexicon")
-                _VADER = SentimentIntensityAnalyzer()
-            logger.info("VADER model loaded")
-        except Exception as exc:
-            logger.warning("VADER unavailable: %s", exc)
-    return _VADER
-
-
-# ── Spanish lexicon baseline ─────────────────────────────────────────────
-
-
-def _baseline_es(text: str) -> Dict[str, float]:
-    """Simple polarity-lexicon baseline for Spanish.
-
-    Counts positive and negative word occurrences and returns normalised scores.
-    """
-    words = text.lower().split()
-    pos_hits = sum(1 for w in words if w in _POSITIVE_WORDS_ES)
-    neg_hits = sum(1 for w in words if w in _NEGATIVE_WORDS_ES)
-    total = pos_hits + neg_hits
-
-    if total == 0:
-        return {"positive": 0.0, "negative": 0.0, "neutral": 1.0}
-
-    pos_score = pos_hits / total
-    neg_score = neg_hits / total
-    return {
-        "positive": round(pos_score, 4),
-        "negative": round(neg_score, 4),
-        "neutral": round(1.0 - pos_score - neg_score, 4),
-    }
-
-
-# ── Prediction functions ─────────────────────────────────────────────────
-
-
-def _predict_pysentimiento(text: str) -> Dict[str, float]:
-    """Predict sentiment using pysentimiento (Spanish BERT)."""
-    analyzer = _get_pysentimiento()
+def _predict_pysentimiento(text: str, lang: str) -> Dict[str, float]:
+    analyzer = _get_pysentimiento(lang)
     if analyzer is None:
-        raise RuntimeError("pysentimiento not available")
+        raise RuntimeError(f"pysentimiento not available for lang={lang}")
     result = analyzer.predict(text)
     return {
         "positive": result.probas.get("POS", 0.0),
@@ -203,31 +169,11 @@ def _predict_pysentimiento(text: str) -> Dict[str, float]:
     }
 
 
-def _predict_roberta(text: str) -> Dict[str, float]:
-    """Predict sentiment using HuggingFace RoBERTa (English)."""
-    pipe = _get_roberta()
-    if pipe is None:
-        raise RuntimeError("HuggingFace RoBERTa not available")
-    result = pipe(text)[0]
-    scores = {item["label"]: item["score"] for item in result}
-    # Map: LABEL_0 (negative), LABEL_1 (neutral), LABEL_2 (positive)
-    return {
-        "positive": scores.get("LABEL_2", 0.0),
-        "negative": scores.get("LABEL_0", 0.0),
-        "neutral": scores.get("LABEL_1", 0.0),
-    }
-
-
 def _predict_vader(text: str) -> Dict[str, float]:
-    """Predict sentiment using VADER (English baseline).
-
-    Returns positive/negative/neutral scores (compound decomposed).
-    """
     analyzer = _get_vader()
     if analyzer is None:
         raise RuntimeError("VADER not available")
     scores = analyzer.polarity_scores(text)
-
     compound = scores["compound"]
     if compound >= 0.05:
         return {
@@ -245,7 +191,191 @@ def _predict_vader(text: str) -> Dict[str, float]:
         return {"positive": 0.0, "negative": 0.0, "neutral": 1.0}
 
 
-# ── Unified public API ────────────────────────────────────────────────────
+def _baseline_es(text: str) -> Dict[str, float]:
+    """Simple polarity-lexicon baseline for Spanish.
+
+    Counts positive/negative word hits and returns normalised scores.
+    """
+    words = text.lower().split()
+    pos_hits = sum(1 for w in words if w in _POSITIVE_WORDS_ES)
+    neg_hits = sum(1 for w in words if w in _NEGATIVE_WORDS_ES)
+    total = pos_hits + neg_hits
+    if total == 0:
+        return {"positive": 0.0, "negative": 0.0, "neutral": 1.0}
+    pos_score = pos_hits / total
+    neg_score = neg_hits / total
+    return {
+        "positive": round(pos_score, 4),
+        "negative": round(neg_score, 4),
+        "neutral": round(1.0 - pos_score - neg_score, 4),
+    }
+
+
+# ── Public prediction functions ────────────────────────────────────────────
+
+
+def predict_sentiment_bert(text: str, lang: str) -> Dict[str, float]:
+    """Predict sentiment using the BERT primary model (pysentimiento).
+
+    Args:
+        text: Cleaned text.
+        lang: ISO code (``"es"`` or ``"en"``).
+
+    Returns:
+        Dict with ``positive``, ``negative``, ``neutral`` scores.
+    """
+    return _predict_pysentimiento(text, lang)
+
+
+def predict_sentiment_baseline(text: str, lang: str) -> Dict[str, float]:
+    """Predict sentiment using the rule-based baseline.
+
+    For ``en``: VADER. For ``es``: polarity lexicon. For other langs
+    returns a neutral default.
+
+    Args:
+        text: Cleaned text.
+        lang: ISO code.
+
+    Returns:
+        Dict with ``positive``, ``negative``, ``neutral`` scores.
+    """
+    if lang == "en":
+        return _predict_vader(text)
+    elif lang == "es":
+        return _baseline_es(text)
+    return {"positive": 0.0, "negative": 0.0, "neutral": 1.0}
+
+
+# ── Batch inference ────────────────────────────────────────────────────────
+
+
+def _batch_pysentimiento(texts: List[str], lang: str) -> List[Dict[str, float]]:
+    """Run pysentimiento batch inference.
+
+    pysentimiento's ``analyzer.predict()`` accepts a list of texts and
+    returns a list of ``AnalyzerOutput`` objects — much faster than
+    row-by-row ``.apply()``.
+    """
+    analyzer = _get_pysentimiento(lang)
+    if analyzer is None:
+        raise RuntimeError(f"pysentimiento not available for lang={lang}")
+    results = analyzer.predict(texts)
+    return [
+        {
+            "positive": r.probas.get("POS", 0.0),
+            "negative": r.probas.get("NEG", 0.0),
+            "neutral": r.probas.get("NEU", 0.0),
+        }
+        for r in results
+    ]
+
+
+# ── DataFrame pipeline ─────────────────────────────────────────────────────
+
+
+def apply_sentiment_pipeline(
+    df: pd.DataFrame,
+    text_col: str = "text_clean",
+    lang_col: str = "language",
+    show_progress: bool = True,
+) -> pd.DataFrame:
+    """Apply both BERT and baseline sentiment to a DataFrame.
+
+    Adds columns:
+    - ``sentiment_bert``: POS / NEG / NEU label from pysentimiento.
+    - ``sentiment_bert_probas``: JSON string of probability scores.
+    - ``sentiment_baseline``: POS / NEG / NEU label from baseline.
+
+    Uses batch inference (grouped by language) when possible.
+
+    Args:
+        df: DataFrame with ``text_col`` and ``lang_col`` columns.
+        text_col: Name of the cleaned-text column.
+        lang_col: Name of the language column.
+        show_progress: Show a ``tqdm`` progress bar.
+
+    Returns:
+        DataFrame with appended sentiment columns.
+    """
+    if df.empty or text_col not in df.columns:
+        return df
+
+    result = df.copy()
+    bert_labels: List[str] = []
+    bert_probas: List[str] = []
+    base_labels: List[str] = []
+    n_total = len(result)
+
+    if show_progress:
+        pbar = tqdm(total=n_total, desc="Sentiment analysis", unit="comments")
+
+    for lang in ("es", "en"):
+        mask = result[lang_col] == lang
+        texts = result.loc[mask, text_col].tolist()
+        if not texts:
+            continue
+
+        # BERT (batch)
+        try:
+            scores_list = _batch_pysentimiento(texts, lang)
+        except RuntimeError as exc:
+            logger.warning("BERT failed for lang=%s: %s", lang, exc)
+            scores_list = [{"positive": 0.0, "negative": 0.0, "neutral": 1.0}] * len(
+                texts
+            )
+        for s in scores_list:
+            label = max(s, key=s.get).upper()[:3]
+            if label == "POS":
+                label = "POS"
+            elif label == "NEG":
+                label = "NEG"
+            else:
+                label = "NEU"
+            bert_labels.append(label)
+            bert_probas.append(str(s))
+
+        # Baseline
+        for t in texts:
+            try:
+                s = predict_sentiment_baseline(t, lang)
+                label = max(s, key=s.get).upper()[:3]
+                if label == "POS":
+                    label = "POS"
+                elif label == "NEG":
+                    label = "NEG"
+                else:
+                    label = "NEU"
+            except Exception as exc:
+                logger.warning("Baseline failed for lang=%s: %s", lang, exc)
+                label = "NEU"
+            base_labels.append(label)
+
+        if show_progress:
+            pbar.update(len(texts))
+
+    # Fallback for other/unknown languages
+    other_mask = ~result[lang_col].isin(("es", "en"))
+    n_other = other_mask.sum()
+    if n_other:
+        bert_labels.extend(["NEU"] * n_other)
+        bert_probas.extend(['{"neutral": 1.0}'] * n_other)
+        base_labels.extend(["NEU"] * n_other)
+        if show_progress:
+            pbar.update(n_other)
+        logger.info("Assigned NEU default to %d comments (unsupported lang)", n_other)
+
+    if show_progress:
+        pbar.close()
+
+    result["sentiment_bert"] = bert_labels
+    result["sentiment_bert_probas"] = bert_probas
+    result["sentiment_baseline"] = base_labels
+    logger.info("Sentiment pipeline complete: %d comments", n_total)
+    return result
+
+
+# ── Legacy API (backward compatible) ───────────────────────────────────────
 
 
 def predict_sentiment(
@@ -258,34 +388,23 @@ def predict_sentiment(
     Args:
         text: Cleaned text string.
         language: ISO 639-1 code (``"es"`` or ``"en"``).
-        model: ``"transformer"`` (BERT/RoBERTa, default) or ``"baseline"``
-            (VADER for EN, polarity-lexicon for ES).
+        model: ``"transformer"`` (BERT, default) or ``"baseline"``.
 
     Returns:
-        Nested dict::
-
-            {
-                "transformer": {"positive": ..., "negative": ..., "neutral": ...},
-                "baseline": {"positive": ..., "negative": ..., "neutral": ...},
-            }
+        Nested dict ``{"transformer": ..., "baseline": ...}``.
     """
     result: Dict[str, Dict[str, float]] = {}
 
-    # Primary model
-    if model == "transformer":
-        if language == "es":
-            result["transformer"] = _predict_pysentimiento(text)
+    try:
+        if model == "transformer":
+            result["transformer"] = predict_sentiment_bert(text, language)
         else:
-            result["transformer"] = _predict_roberta(text)
-    else:
+            result["transformer"] = {"positive": 0.0, "negative": 0.0, "neutral": 1.0}
+    except RuntimeError as exc:
+        logger.warning("Transformer model failed: %s", exc)
         result["transformer"] = {"positive": 0.0, "negative": 0.0, "neutral": 1.0}
 
-    # Baseline
-    if language == "es":
-        result["baseline"] = _baseline_es(text)
-    else:
-        result["baseline"] = _predict_vader(text)
-
+    result["baseline"] = predict_sentiment_baseline(text, language)
     return result
 
 
@@ -302,10 +421,7 @@ def predict_batch(
         model: ``"transformer"`` or ``"baseline"``.
 
     Returns:
-        DataFrame with columns:
-        ``sentiment_label``, ``sentiment_positive``, ``sentiment_negative``,
-        ``sentiment_neutral``, ``sentiment_baseline_label``, and the
-        corresponding baseline scores.
+        DataFrame with sentiment columns.
     """
     records: List[Dict] = []
     for text, lang in zip(texts, languages):
@@ -326,7 +442,7 @@ def predict_batch(
                 }
             )
         except Exception as exc:
-            logger.warning("Sentiment prediction failed for text: %s", exc)
+            logger.warning("Sentiment prediction failed: %s", exc)
             records.append(
                 {
                     "sentiment_label": "error",
@@ -339,7 +455,6 @@ def predict_batch(
                     "sentiment_baseline_neutral": 0.0,
                 }
             )
-
     return pd.DataFrame(records)
 
 
@@ -349,12 +464,12 @@ def add_sentiment_to_dataframe(
     lang_column: str = "language",
     model: str = "transformer",
 ) -> pd.DataFrame:
-    """Add sentiment columns to an existing DataFrame.
+    """Add sentiment columns to an existing DataFrame (legacy API).
 
     Args:
-        df: Input DataFrame with ``text_clean`` and ``language`` columns.
-        text_column: Name of the column with cleaned text.
-        lang_column: Name of the column with language codes.
+        df: Input DataFrame.
+        text_column: Name of cleaned-text column.
+        lang_column: Name of language column.
         model: ``"transformer"`` or ``"baseline"``.
 
     Returns:
@@ -364,9 +479,7 @@ def add_sentiment_to_dataframe(
         return df
 
     logger.info(
-        "Running sentiment analysis on %d comments (model=%s) …",
-        len(df),
-        model,
+        "Running sentiment analysis on %d comments (model=%s) …", len(df), model
     )
     sentiment_df = predict_batch(
         df[text_column].tolist(),
