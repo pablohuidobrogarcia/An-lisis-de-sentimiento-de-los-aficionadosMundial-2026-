@@ -56,6 +56,13 @@ YOUTUBE_QUOTA_SAFETY_MARGIN: int = 500
 YOUTUBE_MAX_RESULTS_PER_SEARCH: int = 10
 YOUTUBE_MAX_COMMENTS_PER_VIDEO: int = 500
 YOUTUBE_SLEEP_BETWEEN_CALLS: float = 0.5
+YOUTUBE_PUBLISHED_AFTER_DAYS: int = 3
+YOUTUBE_PUBLISHED_BEFORE_DAYS: int = 3
+
+# Budget / safety limits
+COLLECTION_TIME_BUDGET_SECONDS: int = 480  # 8 minutes max per run
+COLLECTION_QUOTA_BUDGET: int = 9_000  # stop before hitting the 10k daily limit
+MATCH_PLAYED_BUFFER_HOURS: int = 3  # skip matches until 3h after kickoff
 
 YOUTUBE_SEARCH_TEMPLATES: List[str] = [
     "{team} {opponent} world cup 2026 highlights",
