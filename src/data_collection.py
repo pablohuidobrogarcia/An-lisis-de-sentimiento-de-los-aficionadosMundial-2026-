@@ -467,23 +467,32 @@ def collect_for_matches(
     processed_ids = _load_processed_videos()
     run_processed_videos: Set[str] = set()
     run_start = time.monotonic()
-    now_utc = datetime.now(timezone.utc)
     buffer = timedelta(hours=MATCH_PLAYED_BUFFER_HOURS)
 
     for _, match_row in matches_df.iterrows():
         utc_date = match_row.get("utc_date")
-        home = str(match_row.get("home_team", ""))
-        away = str(match_row.get("away_team", ""))
+        home_raw = match_row.get("home_team")
+        away_raw = match_row.get("away_team")
 
-        # ── Bug 3: skip future matches ──────────────────────────────────
-        if pd.notna(utc_date) and utc_date + buffer > now_utc:
+        # ── Bug 2: skip TBD knockout fixtures with no teams ──────────────
+        if not home_raw or not away_raw:
+            logger.debug("Skipping TBD knockout fixture (teams not yet determined)")
+            continue
+
+        home = str(home_raw)
+        away = str(away_raw)
+
+        # ── Bug 1: skip future matches (defensive type handling) ─────────
+        now_ts = pd.Timestamp.now(tz="UTC")
+        is_played = pd.notna(utc_date) and (utc_date + buffer) <= now_ts
+        if not is_played:
             logger.info(
                 "Skipping %s vs %s — not yet played, will retry on a future run",
                 home, away,
             )
             continue
 
-        date_str = str(utc_date) if pd.notna(utc_date) else ""
+        date_str = str(utc_date)
 
         # Collect for both teams (home and away)
         teams_to_search = [t for t in TARGET_TEAMS if t.lower() in home.lower() or home.lower() in t.lower()]
