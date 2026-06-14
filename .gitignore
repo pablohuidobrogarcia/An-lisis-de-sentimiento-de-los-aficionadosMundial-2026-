@@ -20,11 +20,15 @@ build/
 */.ipynb_checkpoints/*
 
 # ── Data ─────────────────────────────────────────────────────────────────────
-data/raw/*
+# Raw collected data (parquet/csv) and checkpoint files ARE tracked.
+# Required for the daily GitHub Actions collection workflow to commit
+# newly collected data and persist checkpoint state across runs.
+# See data_collection.py: COMMENTS_FILE, CHECKPOINT_FILE, etc.
+
+# data/processed/ is intentionally ignored because it is regenerable
+# from data/raw/ + notebooks. Keeping it out of git avoids bloating
+# the repository with derived artifacts.
 data/processed/*
-!data/raw/.gitkeep
-data/raw/.checkpoints/*
-!data/raw/.checkpoints/.gitkeep
 !data/processed/.gitkeep
 
 # ── Models ───────────────────────────────────────────────────────────────────
