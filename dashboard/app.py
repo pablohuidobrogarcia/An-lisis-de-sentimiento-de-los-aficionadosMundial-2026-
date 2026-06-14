@@ -1,14 +1,16 @@
 """
 World Cup 2026 — Social Media Sentiment Dashboard
 
-Multi-tab Streamlit application that presents the full analysis pipeline
-results in an interactive, business-friendly format.
+Multi-tab Streamlit application built on top of the full processed
+dataset (comentarios_topics_ner).  Requires notebooks 01–04 to have
+been executed at least once.
 
 Usage:
     streamlit run dashboard/app.py
 """
 
 import sys
+from collections import Counter
 from pathlib import Path
 
 import pandas as pd
@@ -16,15 +18,12 @@ import plotly.express as px
 import plotly.graph_objects as go
 import streamlit as st
 
-# Ensure project root is on sys.path
 _project_root = Path(__file__).resolve().parent.parent
 if str(_project_root) not in sys.path:
     sys.path.insert(0, str(_project_root))
 
-from src.config import PROCESSED_DIR, TARGET_TEAMS  # noqa: E402
-from src.utils import load_dataframe, setup_logger  # noqa: E402
-
-logger = setup_logger(__name__)
+from src.dashboard_data import load_dashboard_data, load_match_results  # noqa: E402
+from src.results_api import get_pre_post_windows  # noqa: E402
 
 # ── Page config ─────────────────────────────────────────────────────────────
 st.set_page_config(
@@ -35,126 +34,46 @@ st.set_page_config(
 )
 
 # ── Color palette ───────────────────────────────────────────────────────────
-COLORS = {
-    "positive": "#2ECC71",
-    "negative": "#E74C3C",
-    "neutral": "#95A5A6",
-    "background": "#F8F9FA",
-    "text": "#2C3E50",
-    "accent": "#3498DB",
-}
-TEAM_COLORS = {
-    "Spain": "#C60B1E",
-    "Argentina": "#75AADB",
-    "Brazil": "#009739",
-    "France": "#002395",
-    "England": "#CF142B",
-}
+POS_COLOR = "#2ECC71"
+NEG_COLOR = "#E74C3C"
+NEU_COLOR = "#95A5A6"
+BG_COLOR = "#F8F9FA"
+ACCENT = "#3498DB"
+SENT_COLORS = {"POS": POS_COLOR, "NEU": NEU_COLOR, "NEG": NEG_COLOR}
 
+# ── Load data (cached) ──────────────────────────────────────────────────────
 
-# ── Data loading (cached) ──────────────────────────────────────────────────
+df_full = load_dashboard_data()
+match_results = load_match_results()
 
-
-@st.cache_data(ttl=300)
-def load_final_data() -> pd.DataFrame:
-    """Load the final processed dataset from disk."""
-    path = PROCESSED_DIR / "final.parquet"
-    if path.exists():
-        return load_dataframe(str(path))
-    # Fallback: try earlier stages
-    for name in ["topic_ner", "sentiment", "preprocessed"]:
-        path = PROCESSED_DIR / f"{name}.parquet"
-        if path.exists():
-            df = load_dataframe(str(path))
-            if not df.empty:
-                return df
-    return pd.DataFrame()
-
-
-@st.cache_data(ttl=300)
-def load_shift_data() -> pd.DataFrame:
-    """Load sentiment shift analysis results."""
-    path = PROCESSED_DIR / "sentiment_shift.parquet"
-    if path.exists():
-        return load_dataframe(str(path))
-    return pd.DataFrame()
-
-
-@st.cache_data(ttl=300)
-def load_matches() -> pd.DataFrame:
-    """Load match results."""
-    path = PROCESSED_DIR / "match_results.parquet"
-    if path.exists():
-        return load_dataframe(str(path))
-    return pd.DataFrame()
-
-
-# ── Helper functions ────────────────────────────────────────────────────────
-
-
-def filter_dataframe(
-    df: pd.DataFrame,
-    teams: list,
-    languages: list,
-    date_range: tuple,
-) -> pd.DataFrame:
-    """Apply sidebar filters to the DataFrame."""
-    mask = pd.Series(True, index=df.index)
-
-    if teams and "teams" in df.columns:
-        team_mask = df["teams"].apply(
-            lambda x: any(t in str(x) for t in teams) if pd.notna(x) else False,
-        )
-        mask &= team_mask
-
-    if languages and "language" in df.columns:
-        mask &= df["language"].isin(languages)
-
-    if date_range and "created_utc" in df.columns:
-        dates = pd.to_datetime(df["created_utc"], utc=True, errors="coerce")
-        mask &= dates >= pd.Timestamp(date_range[0], tz="UTC")
-        mask &= dates <= pd.Timestamp(date_range[1], tz="UTC")
-
-    return df[mask].copy()
-
-
-def compute_kpi(df: pd.DataFrame, period: str = "all") -> dict:
-    """Compute summary KPIs for the current filter state."""
-    kpis = {}
-    kpis["total_comments"] = len(df)
-    if "sentiment_label" in df.columns:
-        kpis["pos_pct"] = (df["sentiment_label"] == "positive").mean()
-        kpis["neg_pct"] = (df["sentiment_label"] == "negative").mean()
-        kpis["neu_pct"] = (df["sentiment_label"] == "neutral").mean()
-    return kpis
-
-
-# ── Sidebar ────────────────────────────────────────────────────────────────
+# ── Sidebar ─────────────────────────────────────────────────────────────────
 
 st.sidebar.title("Mundial 2026")
-st.sidebar.markdown("Análisis de Sentimiento en Redes Sociales")
+st.sidebar.markdown("Analisis de Sentimiento en Redes Sociales")
 st.sidebar.markdown("---")
 
-# Filters
+# Team filter — populate from actual data, default to all available
+available_teams = (
+    sorted(df_full["search_team"].dropna().unique()) if not df_full.empty else []
+)
 selected_teams = st.sidebar.multiselect(
     "Selecciones",
-    options=TARGET_TEAMS,
-    default=TARGET_TEAMS,
+    options=available_teams,
+    default=available_teams,
 )
 
+# Language filter
 selected_languages = st.sidebar.multiselect(
     "Idioma",
     options=["es", "en"],
     default=["es", "en"],
-    format_func=lambda x: "Español" if x == "es" else "English",
+    format_func=lambda x: "Espanol" if x == "es" else "English",
 )
 
-# Date range — infer from data
-df_full = load_final_data()
-min_date = None
-max_date = None
-if not df_full.empty and "created_utc" in df_full.columns:
-    dates = pd.to_datetime(df_full["created_utc"], utc=True, errors="coerce")
+# Date range
+min_date, max_date = None, None
+if not df_full.empty and "published_at" in df_full.columns:
+    dates = pd.to_datetime(df_full["published_at"], utc=True, errors="coerce")
     min_date = dates.min().date() if not dates.isna().all() else None
     max_date = dates.max().date() if not dates.isna().all() else None
 
@@ -175,122 +94,159 @@ st.sidebar.markdown(
     "**Temas**: BERTopic + NER"
 )
 
-# ── Tabs ───────────────────────────────────────────────────────────────────
+# ── Filtering ───────────────────────────────────────────────────────────────
+
+df = df_full.copy()
+if not df.empty:
+    if selected_teams:
+        df = df[df["search_team"].isin(selected_teams)]
+    if selected_languages:
+        df = df[df["language"].isin(selected_languages)]
+    if date_range and len(date_range) == 2 and "published_at" in df.columns:
+        dts = pd.to_datetime(df["published_at"], utc=True, errors="coerce")
+        lo = pd.Timestamp(date_range[0], tz="UTC")
+        hi = pd.Timestamp(date_range[1], tz="UTC")
+        df = df[(dts >= lo) & (dts <= hi)]
+
+# ── Tabs ────────────────────────────────────────────────────────────────────
 
 tab1, tab2, tab3, tab4, tab5 = st.tabs(
     [
-        "📊 Resumen Ejecutivo",
-        "📈 Evolución Temporal",
-        "🏆 Comparativa",
-        "📋 Temas",
-        "⚽ Impacto de Partidos",
+        "Resumen Ejecutivo",
+        "Evolucion Temporal",
+        "Comparativa",
+        "Temas",
+        "Impacto de Partidos",
     ]
 )
 
-# ── Data ────────────────────────────────────────────────────────────────────
-df = filter_dataframe(
-    df_full,
-    teams=selected_teams,
-    languages=selected_languages,
-    date_range=date_range,
-)
-shift_df = load_shift_data()
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB 1 — Resumen ejecutivo
+# ═════════════════════════════════════════════════════════════════════════════
 
-# ═══════════════════════════════════════════════════════════════════════════
-# TAB 1: Executive Summary
-# ═══════════════════════════════════════════════════════════════════════════
 with tab1:
     st.header("Resumen Ejecutivo")
 
     if df.empty:
         st.info(
-            "No hay datos disponibles. Ejecuta el pipeline primero:\n"
-            "`python -m src.pipeline`"
+            "No hay datos procesados todavia. "
+            "Ejecuta los notebooks 01-04 para generar los datos."
         )
         st.stop()
 
-    kpis = compute_kpi(df)
+    n_total = len(df)
+    pos_pct = (df["sentiment_bert"] == "POS").mean()
+    neg_pct = (df["sentiment_bert"] == "NEG").mean()
+    neu_pct = (df["sentiment_bert"] == "NEU").mean()
 
-    # KPI row
+    # KPI row (deltas only if we have enough data for a split)
+    half = n_total // 2
+    if half > 10 and "published_at" in df.columns:
+        dts = pd.to_datetime(df["published_at"], utc=True, errors="coerce")
+        first_half = df.iloc[:half]
+        second_half = df.iloc[half:]
+        delta_pos = (second_half["sentiment_bert"] == "POS").mean() - (
+            first_half["sentiment_bert"] == "POS"
+        ).mean()
+        delta_neg = (second_half["sentiment_bert"] == "NEG").mean() - (
+            first_half["sentiment_bert"] == "NEG"
+        ).mean()
+    else:
+        delta_pos = None
+        delta_neg = None
+
     col1, col2, col3, col4 = st.columns(4)
     with col1:
-        st.metric("Comentarios analizados", f"{kpis['total_comments']:,}")
+        st.metric("Comentarios analizados", f"{n_total:,}")
     with col2:
         st.metric(
             "Sentimiento Positivo",
-            f"{kpis['pos_pct']:.1%}",
-            delta=f"{kpis['pos_pct'] - 0.33:.1%} vs. aleatorio",
+            f"{pos_pct:.1%}",
+            delta=f"{delta_pos:+.1%}" if delta_pos is not None else None,
             delta_color="normal",
         )
     with col3:
         st.metric(
             "Sentimiento Negativo",
-            f"{kpis['neg_pct']:.1%}",
-            delta=f"{kpis['neg_pct'] - 0.33:.1%} vs. aleatorio",
+            f"{neg_pct:.1%}",
+            delta=f"{delta_neg:+.1%}" if delta_neg is not None else None,
             delta_color="inverse",
         )
     with col4:
-        st.metric(
-            "Comentarios con emojis",
-            f"{(df['n_emojis'] > 0).mean():.1%}" if "n_emojis" in df.columns else "N/A",
+        emoji_pct = (df["n_emojis"] > 0).mean() if "n_emojis" in df.columns else 0
+        st.metric("Con emojis", f"{emoji_pct:.1%}")
+
+    # Auto-generated summary
+    teams_str = ", ".join(sorted(df["search_team"].unique()))
+    top_neg_topic = ""
+    if "topic_label" in df.columns and "sentiment_bert" in df.columns:
+        neg_topic_ct = (
+            df[df["sentiment_bert"] == "NEG"]
+            .groupby("topic_label")
+            .size()
+            .sort_values(ascending=False)
         )
+        neg_topic_ct = neg_topic_ct[neg_topic_ct.index != "Outliers / Other"]
+        if not neg_topic_ct.empty:
+            top_neg_topic = neg_topic_ct.index[0]
+            top_neg_pct = neg_topic_ct.iloc[0] / (df["sentiment_bert"] == "NEG").sum()
+            top_neg_topic = f", principalmente relacionado con **{top_neg_topic}** ({top_neg_pct:.0%} de los negativos)"
+        else:
+            top_neg_topic = "."
+
+    st.markdown(
+        f"De los **{n_total:,}** comentarios analizados sobre **{teams_str}**, "
+        f"el **{neg_pct:.1%}** expresa sentimiento negativo{top_neg_topic} "
+        f"El **{pos_pct:.1%}** es positivo y el **{neu_pct:.1%}** neutral."
+    )
 
     st.markdown("---")
 
-    # Sentiment donut chart
+    # Sentiment donut
     col_a, col_b = st.columns(2)
     with col_a:
-        if "sentiment_label" in df.columns:
-            fig = go.Figure(
-                data=[
-                    go.Pie(
-                        labels=["Positivo", "Negativo", "Neutral"],
-                        values=[
-                            kpis["pos_pct"] * 100,
-                            kpis["neg_pct"] * 100,
-                            kpis["neu_pct"] * 100,
-                        ],
-                        marker_colors=[
-                            COLORS["positive"],
-                            COLORS["negative"],
-                            COLORS["neutral"],
-                        ],
-                        hole=0.4,
-                        textinfo="label+percent",
-                    )
-                ]
-            )
-            fig.update_layout(title="Distribución General de Sentimiento")
-            st.plotly_chart(fig, use_container_width=True)
+        fig = go.Figure(
+            data=[
+                go.Pie(
+                    labels=["Positivo", "Negativo", "Neutral"],
+                    values=[pos_pct * 100, neg_pct * 100, neu_pct * 100],
+                    marker_colors=[POS_COLOR, NEG_COLOR, NEU_COLOR],
+                    hole=0.4,
+                    textinfo="label+percent",
+                )
+            ]
+        )
+        fig.update_layout(title="Distribucion General de Sentimiento")
+        st.plotly_chart(fig, use_container_width=True)
 
     with col_b:
-        if "teams" in df.columns and "sentiment_label" in df.columns:
+        if "search_team" in df.columns:
             team_sent = (
-                df.groupby("teams")["sentiment_label"]
+                df.groupby("search_team")["sentiment_bert"]
                 .value_counts(normalize=True)
                 .unstack()
             )
             if not team_sent.empty:
                 fig = go.Figure()
-                for col_name in ["positive", "negative", "neutral"]:
+                for col_name in ["POS", "NEU", "NEG"]:
                     if col_name in team_sent.columns:
                         fig.add_trace(
                             go.Bar(
-                                name=col_name.capitalize(),
+                                name=col_name,
                                 x=team_sent.index,
                                 y=team_sent[col_name],
-                                marker_color=COLORS.get(col_name, "#999"),
+                                marker_color=SENT_COLORS[col_name],
                             )
                         )
                 fig.update_layout(
-                    title="Sentimiento por Selección",
+                    title="Sentimiento por Seleccion",
                     barmode="group",
-                    xaxis_title="Selección",
-                    yaxis_title="Proporción",
+                    xaxis_title="Seleccion",
+                    yaxis_title="Proporcion",
                 )
                 st.plotly_chart(fig, use_container_width=True)
 
-    # Topic overview
+    # Topic overview on executive summary
     if "topic_label" in df.columns:
         st.subheader("Temas Principales")
         topic_counts = df["topic_label"].value_counts().head(8).reset_index()
@@ -307,392 +263,506 @@ with tab1:
         fig.update_layout(yaxis={"categoryorder": "total ascending"})
         st.plotly_chart(fig, use_container_width=True)
 
-# ═══════════════════════════════════════════════════════════════════════════
-# TAB 2: Time Evolution
-# ═══════════════════════════════════════════════════════════════════════════
-with tab2:
-    st.header("Evolución Temporal del Sentimiento")
-    st.markdown(
-        "La línea discontinua muestra la media móvil de 3 días. "
-        "Las líneas verticales marcan los partidos de cada selección."
-    )
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB 2 — Evolucion temporal
+# ═════════════════════════════════════════════════════════════════════════════
 
-    if df.empty or "created_utc" not in df.columns:
-        st.warning("Datos insuficientes para evolución temporal.")
+with tab2:
+    st.header("Evolucion Temporal del Sentimiento")
+
+    if df.empty or "published_at" not in df.columns:
+        st.warning("Datos insuficientes para evolucion temporal.")
     else:
         df_plot = df.copy()
-        df_plot["date"] = pd.to_datetime(
-            df_plot["created_utc"],
-            utc=True,
-        ).dt.date
+        df_plot["date"] = pd.to_datetime(df_plot["published_at"], utc=True)
+
+        # Dynamic granularity: hourly if span <= 3 days, daily otherwise
+        span = (df_plot["date"].max() - df_plot["date"].min()).total_seconds()
+        if span <= 3 * 86400:
+            freq_label = "hour"
+            df_plot["period"] = df_plot["date"].dt.floor("h")
+        else:
+            freq_label = "day"
+            df_plot["period"] = df_plot["date"].dt.floor("D")
 
         team_for_plot = st.selectbox(
-            "Selecciona una selección",
-            options=["Todas"] + TARGET_TEAMS,
+            "Selecciona una seleccion",
+            options=["Todas"] + selected_teams,
         )
 
         if team_for_plot != "Todas":
-            df_plot = df_plot[
-                df_plot["teams"].str.contains(team_for_plot, case=False, na=False)
-            ]
+            df_plot = df_plot[df_plot["search_team"] == team_for_plot]
 
         daily = (
-            df_plot.groupby("date")["sentiment_label"]
+            df_plot.groupby("period")["sentiment_bert"]
             .value_counts(normalize=True)
             .unstack()
+            .fillna(0)
         )
-        daily = daily.fillna(0)
 
         if not daily.empty:
             fig = go.Figure()
-
-            for col_name, color_key in [
-                ("positive", "positive"),
-                ("negative", "negative"),
-                ("neutral", "neutral"),
-            ]:
+            for col_name in ["POS", "NEU", "NEG"]:
                 if col_name in daily.columns:
                     fig.add_trace(
                         go.Scatter(
                             x=daily.index,
                             y=daily[col_name],
                             mode="lines",
-                            name=col_name.capitalize(),
-                            line=dict(color=COLORS[color_key], width=1),
-                            opacity=0.5,
-                        )
-                    )
-                    # 3-day rolling average
-                    rolling = daily[col_name].rolling(3, min_periods=1).mean()
-                    fig.add_trace(
-                        go.Scatter(
-                            x=daily.index,
-                            y=rolling,
-                            mode="lines",
-                            name=f"{col_name.capitalize()} (media 3d)",
-                            line=dict(color=COLORS[color_key], width=2.5, dash="dot"),
+                            name=col_name,
+                            line=dict(color=SENT_COLORS[col_name], width=2),
                         )
                     )
 
             # Match annotations
-            matches_df = load_matches()
-            if not matches_df.empty and team_for_plot != "Todas":
-                for _, mrow in matches_df.iterrows():
-                    mdate = pd.to_datetime(mrow["utc_date"]).date()
-                    if min(daily.index) <= mdate <= max(daily.index):
+            mr = match_results
+            if not mr.empty:
+                # Filter to teams in current selection
+                if team_for_plot != "Todas":
+                    mr = mr[mr["team"] == team_for_plot]
+                for _, mrow in mr.iterrows():
+                    mdate = pd.to_datetime(mrow["match_date"])
+                    if mdate.tz is None:
+                        mdate = mdate.tz_localize("UTC")
+                    if daily.index.min() <= mdate <= daily.index.max():
+                        outcome = mrow["outcome"]
+                        opp = mrow["opponent"]
+                        score = mrow["score"]
                         fig.add_vline(
                             x=mdate,
-                            line_width=1,
+                            line_width=1.5,
                             line_dash="dash",
                             line_color="gray",
-                            opacity=0.5,
+                            opacity=0.6,
+                            annotation_text=f"{outcome} vs {opp} ({score})",
+                            annotation_position="top",
                         )
 
             fig.update_layout(
-                title=f"Evolución del Sentimiento{ ' — ' + team_for_plot if team_for_plot != 'Todas' else ''}",
-                xaxis_title="Fecha",
-                yaxis_title="Proporción",
+                title=f"Evolucion del Sentimiento{' — ' + team_for_plot if team_for_plot != 'Todas' else ''}",
+                xaxis_title="Fecha" if freq_label == "day" else "Fecha (hora)",
+                yaxis_title="Proporcion",
                 hovermode="x unified",
             )
             st.plotly_chart(fig, use_container_width=True)
+        else:
+            st.warning("No hay suficientes datos para la escala temporal seleccionada.")
 
-# ═══════════════════════════════════════════════════════════════════════════
-# TAB 3: Team Comparison
-# ═══════════════════════════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB 3 — Comparativa entre selecciones
+# ═════════════════════════════════════════════════════════════════════════════
+
 with tab3:
     st.header("Comparativa entre Selecciones")
 
-    if df.empty or "teams" not in df.columns:
-        st.warning("Datos insuficientes para comparativa.")
-    else:
-        # Radar chart: average metrics per team
-        metrics = []
-        if "sentiment_positive" in df.columns:
-            metrics += ["sentiment_positive", "sentiment_negative", "sentiment_neutral"]
-        if "n_emojis" in df.columns:
-            metrics.append("n_emojis")
+    if df.empty or "search_team" not in df.columns:
+        st.info(
+            "No hay datos procesados todavia. "
+            "Ejecuta los notebooks 01-04 para generar los datos."
+        )
+        st.stop()
 
-        if metrics:
-            radar_df = df.groupby("teams")[metrics].mean().reset_index()
+    unique_teams = df["search_team"].unique()
+    if len(unique_teams) <= 1:
+        st.info(
+            "Actualmente solo hay datos para una seleccion. "
+            "La comparativa se enriquecera a medida que la recoleccion "
+            "diaria incorpore mas equipos."
+        )
 
-            fig = go.Figure()
-            for _, row in radar_df.iterrows():
-                fig.add_trace(
-                    go.Scatterpolar(
-                        r=[row[m] for m in metrics],
-                        theta=metrics,
-                        fill="toself",
-                        name=row["teams"],
-                        line_color=TEAM_COLORS.get(row["teams"], "#3498DB"),
-                    )
+    # Grouped bar: sentiment distribution per team
+    st.subheader("Distribucion de Sentimiento por Seleccion")
+    team_sent = (
+        df.groupby("search_team")["sentiment_bert"]
+        .value_counts(normalize=True)
+        .unstack()
+        .fillna(0)
+    )
+    fig = go.Figure()
+    for col_name in ["POS", "NEU", "NEG"]:
+        if col_name in team_sent.columns:
+            fig.add_trace(
+                go.Bar(
+                    name=col_name,
+                    x=team_sent.index,
+                    y=team_sent[col_name],
+                    marker_color=SENT_COLORS[col_name],
                 )
-            fig.update_layout(
-                title="Perfil Comparativo por Selección",
-                polar=dict(radialaxis=dict(visible=True)),
             )
-            st.plotly_chart(fig, use_container_width=True)
+    fig.update_layout(
+        barmode="group",
+        xaxis_title="Seleccion",
+        yaxis_title="Proporcion",
+    )
+    st.plotly_chart(fig, use_container_width=True)
 
-        # Grouped bar: sentiment by team
-        st.subheader("Distribución de Sentimiento por Selección")
-        team_sent = (
-            df.groupby("teams")["sentiment_label"]
+    # Radar chart (only if 2+ teams)
+    if len(unique_teams) >= 2:
+        st.subheader("Perfil Comparativo")
+        metrics_agg = {
+            "POS_pct": (df["sentiment_bert"] == "POS").mean(),
+            "NEG_pct": (df["sentiment_bert"] == "NEG").mean(),
+            "NEU_pct": (df["sentiment_bert"] == "NEU").mean(),
+        }
+        radar_df = (
+            df.groupby("search_team")["sentiment_bert"]
             .value_counts(normalize=True)
             .unstack()
+            .fillna(0)
         )
+        all_dimensions = [c for c in ["POS", "NEU", "NEG"] if c in radar_df.columns]
+
         fig = go.Figure()
-        for col_name in ["positive", "negative", "neutral"]:
-            if col_name in team_sent.columns:
-                fig.add_trace(
-                    go.Bar(
-                        name=col_name.capitalize(),
-                        x=team_sent.index,
-                        y=team_sent[col_name],
-                        marker_color=COLORS[col_name],
-                    )
+        for team in radar_df.index:
+            fig.add_trace(
+                go.Scatterpolar(
+                    r=[radar_df.loc[team, d] for d in all_dimensions],
+                    theta=[
+                        {"POS": "Positivo", "NEU": "Neutral", "NEG": "Negativo"}[d]
+                        for d in all_dimensions
+                    ],
+                    fill="toself",
+                    name=str(team),
                 )
+            )
         fig.update_layout(
-            barmode="group",
-            xaxis_title="Selección",
-            yaxis_title="Proporción",
+            title="Perfil Comparativo por Seleccion",
+            polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
         )
         st.plotly_chart(fig, use_container_width=True)
 
-        # Sentiment polarity box plot
-        if "sentiment_positive" in df.columns:
-            st.subheader("Distribución de Puntuación Positiva")
-            fig = px.box(
-                df,
-                x="teams",
-                y="sentiment_positive",
-                color="teams",
-                color_discrete_map=TEAM_COLORS,
-                points="outliers",
-            )
-            fig.update_layout(xaxis_title="", yaxis_title="Puntuación Positiva")
-            st.plotly_chart(fig, use_container_width=True)
+    # Basic stats table
+    st.subheader("Estadisticas por Seleccion")
+    stats_list = []
+    for team in unique_teams:
+        tdf = df[df["search_team"] == team]
+        stats_list.append(
+            {
+                "Seleccion": team,
+                "Comentarios": len(tdf),
+                "Positivo": f"{(tdf['sentiment_bert'] == 'POS').mean():.1%}",
+                "Negativo": f"{(tdf['sentiment_bert'] == 'NEG').mean():.1%}",
+                "Neutral": f"{(tdf['sentiment_bert'] == 'NEU').mean():.1%}",
+                "% Emojis": f"{(tdf['n_emojis'] > 0).mean():.1%}"
+                if "n_emojis" in tdf.columns
+                else "N/A",
+            }
+        )
+    st.dataframe(pd.DataFrame(stats_list), use_container_width=True)
 
-# ═══════════════════════════════════════════════════════════════════════════
-# TAB 4: Topics
-# ═══════════════════════════════════════════════════════════════════════════
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB 4 — Temas
+# ═════════════════════════════════════════════════════════════════════════════
+
 with tab4:
-    st.header("Análisis de Temas")
-    st.markdown(
-        "Temas extraídos con BERTopic (modelo multilingüe). "
-        "Cada comentario se asigna al tema más probable. "
-        "Los temas se etiquetan automáticamente con sus 3 palabras más representativas."
-    )
+    st.header("Analisis de Temas")
 
     if "topic_label" not in df.columns:
-        st.warning("Temas no disponibles. Ejecuta topic modeling primero.")
-    else:
-        col_t1, col_t2 = st.columns([2, 1])
+        st.warning(
+            "Temas no disponibles. Ejecuta topic modeling primero (notebook 04)."
+        )
+        st.stop()
 
-        with col_t1:
-            topic_counts = df["topic_label"].value_counts().reset_index()
-            topic_counts.columns = ["Tema", "Comentarios"]
-
-            fig = px.bar(
-                topic_counts.head(15),
-                x="Comentarios",
-                y="Tema",
-                orientation="h",
-                title="Distribución de Temas",
-                color="Comentarios",
-                color_continuous_scale="Viridis",
-            )
-            fig.update_layout(yaxis={"categoryorder": "total ascending"})
-            st.plotly_chart(fig, use_container_width=True)
-
-        with col_t2:
-            # Topic × Sentiment heatmap
-            cross = pd.crosstab(
-                df["topic_label"],
-                df["sentiment_label"],
-                normalize="index",
-            )
-            if not cross.empty:
-                fig = px.imshow(
-                    cross,
-                    text_auto=".0%",
-                    color_continuous_scale="RdBu_r",
-                    title="Tema vs. Sentimiento",
-                    aspect="auto",
-                )
-                fig.update_layout(height=400)
-                st.plotly_chart(fig, use_container_width=True)
-
-        # Topic evolution over time
-        if "created_utc" in df.columns:
-            st.subheader("Evolución de Temas en el Tiempo")
-            df_time = df.copy()
-            df_time["date"] = pd.to_datetime(
-                df_time["created_utc"],
-                utc=True,
-            ).dt.date
-
-            topic_freq = (
-                df_time.groupby(["date", "topic_label"])
-                .size()
-                .reset_index(name="count")
-            )
-
-            top_topics = (
-                topic_freq.groupby("topic_label")["count"].sum().nlargest(6).index
-            )
-            topic_freq = topic_freq[topic_freq["topic_label"].isin(top_topics)]
-
-            fig = px.line(
-                topic_freq,
-                x="date",
-                y="count",
-                color="topic_label",
-                title="Frecuencia de Temas Destacados en el Tiempo",
-                markers=True,
-            )
-            st.plotly_chart(fig, use_container_width=True)
-
-        # Brand mentions
-        if "brands_mentioned" in df.columns:
-            st.subheader("Menciones de Marcas")
-            brand_series = (
-                df[df["brands_mentioned"] != ""]["brands_mentioned"]
-                .str.split(",")
-                .explode()
-                .str.strip()
-                .value_counts()
-            )
-            if not brand_series.empty:
-                fig = px.bar(
-                    brand_series.head(10),
-                    orientation="h",
-                    title="Top 10 Marcas Mencionadas",
-                    color=brand_series.head(10).values,
-                    color_continuous_scale="Blues",
-                )
-                fig.update_layout(
-                    xaxis_title="Menciones",
-                    yaxis_title="",
-                    yaxis={"categoryorder": "total ascending"},
-                )
-                st.plotly_chart(fig, use_container_width=True)
-
-# ═══════════════════════════════════════════════════════════════════════════
-# TAB 5: Match Impact
-# ═══════════════════════════════════════════════════════════════════════════
-with tab5:
-    st.header("Impacto de Resultados Deportivos en el Sentimiento")
     st.markdown(
-        "Para cada partido, se compara el sentimiento en ventanas de "
-        "24h antes vs. 24h después. La prueba de Mann-Whitney U evalúa "
-        "si la diferencia es estadísticamente significativa (p < 0.05)."
+        "Temas extraidos con BERTopic (modelo multilinguee). "
+        "Los temas se etiquetan con sus 3 palabras mas representativas."
     )
 
-    if shift_df.empty:
-        st.info(
-            "No hay datos de impacto de partidos disponibles. "
-            "Asegúrate de que football-data.org devuelve resultados "
-            "y de que los comentarios están dentro de las ventanas temporales."
-        )
-    else:
-        # Filter by team
-        team_shift = st.selectbox(
-            "Selecciona selección",
-            options=shift_df["team"].unique(),
-        )
-        team_data = shift_df[shift_df["team"] == team_shift]
+    # Topic count bar (top 10 excluding -1 or labeled)
+    topic_counts = df["topic_label"].value_counts().reset_index()
+    topic_counts.columns = ["Tema", "Comentarios"]
+    # Separate outlier for clarity
+    outlier_rows = topic_counts[topic_counts["Tema"] == "Outliers / Other"]
+    main_rows = topic_counts[topic_counts["Tema"] != "Outliers / Other"].head(10)
+    plot_topics = pd.concat([main_rows, outlier_rows], ignore_index=True)
 
-        st.subheader(f"Diferencia de Sentimiento — {team_shift}")
+    fig = px.bar(
+        plot_topics,
+        x="Comentarios",
+        y="Tema",
+        orientation="h",
+        title="Distribucion de Temas (top 10 + Sin clasificar)",
+        color="Comentarios",
+        color_continuous_scale="Viridis",
+    )
+    fig.update_layout(yaxis={"categoryorder": "total ascending"})
+    st.plotly_chart(fig, use_container_width=True)
 
-        # Before/after bars
-        fig = go.Figure()
-        for result in team_data["result"].unique():
-            rdata = team_data[team_data["result"] == result]
-            if rdata.empty:
-                continue
+    # Topic x sentiment stacked bar
+    st.subheader("Sentimiento por Tema")
+    ct = pd.crosstab(df["topic_label"], df["sentiment_bert"], normalize="index")
+    ct = ct[[c for c in ["POS", "NEU", "NEG"] if c in ct.columns]]
 
+    fig = go.Figure()
+    for col_name in ["POS", "NEU", "NEG"]:
+        if col_name in ct.columns:
             fig.add_trace(
                 go.Bar(
-                    name=f"{result} (antes)",
-                    x=[f"{result}"],
-                    y=rdata["pre_pos_pct"],
-                    marker_color=COLORS["positive"],
-                    opacity=0.5,
-                    legendgroup=result,
+                    name=col_name,
+                    y=ct.index,
+                    x=ct[col_name],
+                    orientation="h",
+                    marker_color=SENT_COLORS[col_name],
                 )
             )
-            fig.add_trace(
-                go.Bar(
-                    name=f"{result} (después)",
-                    x=[f"{result}"],
-                    y=rdata["post_pos_pct"],
-                    marker_color=COLORS["positive"],
-                    opacity=1.0,
-                    legendgroup=result,
-                )
+    fig.update_layout(
+        barmode="stack",
+        title="Proporcion de Sentimiento por Tema",
+        xaxis_title="Proporcion",
+        yaxis_title="",
+        height=max(300, len(ct) * 25),
+    )
+    st.plotly_chart(fig, use_container_width=True)
+
+    # Topic selector — show sample comments
+    topic_list = sorted(df["topic_label"].unique())
+    selected_topic = st.selectbox(
+        "Selecciona un tema para ver comentarios de ejemplo", topic_list
+    )
+    topic_samples = df[df["topic_label"] == selected_topic][
+        ["text_clean", "sentiment_bert", "language", "search_team"]
+    ].head(10)
+    st.dataframe(topic_samples, use_container_width=True)
+
+    # Entities table
+    st.subheader("Jugadores mas mencionados")
+    if "players_mentioned" in df.columns:
+        all_players = df["players_mentioned"].str.split(",").explode().str.strip()
+        all_players = all_players[all_players != ""]
+        if not all_players.empty:
+            player_counts = Counter(all_players)
+            player_df = pd.DataFrame(
+                player_counts.most_common(15), columns=["Jugador", "Menciones"]
             )
-
-        fig.update_layout(
-            barmode="group",
-            title="% Positivo Antes vs. Después del Partido",
-            xaxis_title="Resultado",
-            yaxis_title="Proporción Positivo",
-        )
-        st.plotly_chart(fig, use_container_width=True)
-
-        # Detailed table
-        st.subheader("Resultados Detallados")
-        display_cols = [
-            "team",
-            "result",
-            "n_pre",
-            "n_post",
-            "pre_pos_pct",
-            "post_pos_pct",
-            "pre_neg_pct",
-            "post_neg_pct",
-            "p_value",
-            "significant",
-        ]
-        display_cols = [c for c in display_cols if c in team_data.columns]
-        st.dataframe(
-            team_data[display_cols].style.applymap(
-                lambda x: "background-color: #d4edda"
-                if x is True
-                else ("background-color: #f8d7da" if x is False else ""),
-                subset=["significant"],
-            ),
-            use_container_width=True,
-        )
-
-        # Interpretation
-        st.markdown("---")
-        st.subheader("Interpretación")
-        sig_results = shift_df[shift_df["significant"]]
-        if not sig_results.empty:
-            st.success(
-                "Se detectaron cambios estadísticamente significativos "
-                "en los siguientes casos:"
-            )
-            for _, row in sig_results.iterrows():
-                direction = (
-                    "mejoró" if row["post_pos_pct"] > row["pre_pos_pct"] else "empeoró"
+            # Sentiment breakdown per player
+            player_sent_rows = []
+            for player in player_df["Jugador"].head(10):
+                mask = df["players_mentioned"].str.contains(player, na=False)
+                subset = df[mask]
+                player_sent_rows.append(
+                    {
+                        "Jugador": player,
+                        "Menciones": mask.sum(),
+                        "POS": f"{(subset['sentiment_bert'] == 'POS').mean():.0%}",
+                        "NEU": f"{(subset['sentiment_bert'] == 'NEU').mean():.0%}",
+                        "NEG": f"{(subset['sentiment_bert'] == 'NEG').mean():.0%}",
+                    }
                 )
-                st.markdown(
-                    f"- **{row['team']}** tras {row['result']}: "
-                    f"sentimiento {direction} "
-                    f"(p = {row['p_value']:.4f})"
-                )
+            st.dataframe(pd.DataFrame(player_sent_rows), use_container_width=True)
         else:
-            st.info(
-                "Aún no se detectan cambios estadísticamente significativos "
-                "(p < 0.05). Esto puede deberse a que el torneo no ha "
-                "comenzado o a que el volumen de datos es insuficiente."
+            st.info("No se detectaron jugadores en los datos actuales.")
+    else:
+        st.info("Columna de jugadores no disponible.")
+
+    # Brands
+    if "brands_mentioned" in df.columns:
+        st.subheader("Marcas patrocinadoras")
+        all_brands = df["brands_mentioned"].str.split(",").explode().str.strip()
+        all_brands = all_brands[all_brands != ""]
+        if not all_brands.empty():
+            brand_counts = Counter(all_brands)
+            brand_df = pd.DataFrame(
+                brand_counts.most_common(10), columns=["Marca", "Menciones"]
             )
+            st.dataframe(brand_df, use_container_width=True)
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TAB 5 — Impacto de resultados
+# ═════════════════════════════════════════════════════════════════════════════
+
+with tab5:
+    st.header("Impacto de Resultados Deportivos en el Sentimiento")
+
+    mr = match_results
+    if mr.empty:
+        st.info(
+            "No hay datos de resultados disponibles. "
+            "Asegurate de que FOOTBALL_DATA_API_KEY esta configurada "
+            "y los partidos han finalizado."
+        )
+        st.stop()
+
+    if df.empty:
+        st.info(
+            "No hay datos procesados todavia. "
+            "Ejecuta los notebooks 01-04 para generar los datos."
+        )
+        st.stop()
+
+    st.markdown(
+        "Para cada partido finalizado, se compara el sentimiento en ventanas "
+        "de 24h antes vs. 24h despues. "
+        "La prueba de Mann-Whitney U evalua si la diferencia es "
+        "estadisticamente significativa (p < 0.05)."
+    )
+
+    # Summary table of finished matches
+    st.subheader("Partidos finalizados")
+    mr_display = mr[
+        ["team", "opponent", "match_date", "outcome", "score", "stage"]
+    ].copy()
+    mr_display["match_date"] = pd.to_datetime(mr_display["match_date"]).dt.strftime(
+        "%Y-%m-%d %H:%M"
+    )
+    st.dataframe(mr_display, use_container_width=True)
+
+    # For each match, compute pre/post sentiment
+    st.subheader("Sentimiento antes vs. despues")
+
+    for _, mrow in mr.iterrows():
+        mdate = pd.to_datetime(mrow["match_date"])
+        team = mrow["team"]
+        opponent = mrow["opponent"]
+        outcome = mrow["outcome"]
+        score = mrow["score"]
+
+        pre_start, pre_end, post_start, post_end = get_pre_post_windows(mdate)
+
+        with st.expander(
+            f"{team} vs {opponent} ({score}, {outcome}) — {mdate.strftime('%Y-%m-%d')}"
+        ):
+            # Filter comments for this team within windows
+            if "published_at" in df.columns:
+                dts = pd.to_datetime(df["published_at"], utc=True, errors="coerce")
+                team_mask = df["search_team"] == team
+
+                pre_mask = team_mask & (dts >= pre_start) & (dts < pre_end)
+                post_mask = team_mask & (dts >= post_start) & (dts <= post_end)
+
+                pre_df = df[pre_mask]
+                post_df = df[post_mask]
+
+                if len(pre_df) < 3 or len(post_df) < 3:
+                    st.info(
+                        f"Datos insuficientes para esta ventana "
+                        f"(pre: {len(pre_df)}, post: {len(post_df)} comentarios). "
+                        "Se necesitan al menos 3 por ventana."
+                    )
+                    continue
+
+                # Pre/post sentiment distribution
+                pre_dist = pre_df["sentiment_bert"].value_counts(normalize=True)
+                post_dist = post_df["sentiment_bert"].value_counts(normalize=True)
+
+                col1, col2 = st.columns(2)
+                with col1:
+                    fig_pre = go.Figure(
+                        data=[
+                            go.Pie(
+                                labels=["Positivo", "Negativo", "Neutral"],
+                                values=[
+                                    pre_dist.get("POS", 0) * 100,
+                                    pre_dist.get("NEG", 0) * 100,
+                                    pre_dist.get("NEU", 0) * 100,
+                                ],
+                                marker_colors=[POS_COLOR, NEG_COLOR, NEU_COLOR],
+                                hole=0.4,
+                                textinfo="label+percent",
+                            )
+                        ]
+                    )
+                    fig_pre.update_layout(
+                        title=f"Antes (n={len(pre_df)})",
+                        height=300,
+                    )
+                    st.plotly_chart(fig_pre, use_container_width=True)
+
+                with col2:
+                    fig_post = go.Figure(
+                        data=[
+                            go.Pie(
+                                labels=["Positivo", "Negativo", "Neutral"],
+                                values=[
+                                    post_dist.get("POS", 0) * 100,
+                                    post_dist.get("NEG", 0) * 100,
+                                    post_dist.get("NEU", 0) * 100,
+                                ],
+                                marker_colors=[POS_COLOR, NEG_COLOR, NEU_COLOR],
+                                hole=0.4,
+                                textinfo="label+percent",
+                            )
+                        ]
+                    )
+                    fig_post.update_layout(
+                        title=f"Despues (n={len(post_df)})",
+                        height=300,
+                    )
+                    st.plotly_chart(fig_post, use_container_width=True)
+
+                # Pre/post grouped bar
+                bar_df = pd.DataFrame(
+                    {
+                        "Periodo": ["Antes", "Despues"],
+                        "POS": [
+                            pre_dist.get("POS", 0),
+                            post_dist.get("POS", 0),
+                        ],
+                        "NEU": [
+                            pre_dist.get("NEU", 0),
+                            post_dist.get("NEU", 0),
+                        ],
+                        "NEG": [
+                            pre_dist.get("NEG", 0),
+                            post_dist.get("NEG", 0),
+                        ],
+                    }
+                )
+                fig_bar = go.Figure()
+                for col_name in ["POS", "NEU", "NEG"]:
+                    fig_bar.add_trace(
+                        go.Bar(
+                            name=col_name,
+                            x=bar_df["Periodo"],
+                            y=bar_df[col_name],
+                            marker_color=SENT_COLORS[col_name],
+                        )
+                    )
+                fig_bar.update_layout(
+                    barmode="group",
+                    title="Comparacion Antes / Despues",
+                    yaxis_title="Proporcion",
+                    height=300,
+                )
+                st.plotly_chart(fig_bar, use_container_width=True)
+
+                # Statistical test (Mann-Whitney)
+                try:
+                    from scipy.stats import mannwhitneyu
+
+                    # Map sentiment to numeric score
+                    sent_map = {"POS": 2, "NEU": 1, "NEG": 0}
+                    pre_scores = pre_df["sentiment_bert"].map(sent_map).values
+                    post_scores = post_df["sentiment_bert"].map(sent_map).values
+                    stat, p_value = mannwhitneyu(
+                        pre_scores, post_scores, alternative="two-sided"
+                    )
+                    significant = p_value < 0.05
+                    delta_pos_pct = post_dist.get("POS", 0) - pre_dist.get("POS", 0)
+
+                    interpretation = (
+                        "diferencia estadisticamente significativa"
+                        if significant
+                        else "diferencia NO significativa"
+                    )
+                    direction = (
+                        f"El sentimiento positivo {'aumento' if delta_pos_pct > 0 else 'disminuyo'} "
+                        f"en {abs(delta_pos_pct):.1%} despues del partido."
+                    )
+
+                    st.markdown(
+                        f"**Prueba Mann-Whitney U**: {interpretation} (p = {p_value:.4f})"
+                    )
+                    st.markdown(direction)
+                except ImportError:
+                    st.info(
+                        "scipy no esta disponible. Instala scipy para ver "
+                        "los resultados de la prueba estadistica."
+                    )
 
 # ── Footer ─────────────────────────────────────────────────────────────────
 st.sidebar.markdown("---")
 st.sidebar.markdown(
-    "**Autor**: Pablo Huidobro García  \n"
+    "**Autor**: Pablo Huidobro Garcia  \n"
     "Proyecto: [GitHub](https://github.com/your-username/"
     "mundial2026-sentiment-analysis)"
 )

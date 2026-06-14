@@ -499,16 +499,16 @@ def compute_sentiment_shift(
     if df.empty:
         return pd.DataFrame()
 
+    # Normalise POS/NEU/NEG → positive/neutral/negative if needed
+    df = df.copy()
+    if df[sentiment_column].isin(["POS", "NEU", "NEG"]).all():
+        df[sentiment_column] = df[sentiment_column].map(
+            {"POS": "positive", "NEU": "neutral", "NEG": "negative"}
+        )
+
     # Map sentiment label to numeric score
     sentiment_map = {"positive": 2, "neutral": 1, "negative": 0}
-    df = df.copy()
-    df["_sentiment_score"] = (
-        df[sentiment_column]
-        .map(
-            sentiment_map,
-        )
-        .fillna(1)
-    )
+    df["_sentiment_score"] = df[sentiment_column].map(sentiment_map).fillna(1)
 
     results_list = []
 

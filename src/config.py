@@ -104,7 +104,29 @@ TOPIC_MAX_TOPICS: int = 25
 # Manual overrides for interpretable topic labels (populate after inspecting
 # topic_model.get_topic_info() output from a real run).
 # Format: {"keyword1 / keyword2 / keyword3": "Custom Label"}
-TOPIC_LABEL_OVERRIDES: Dict[str, str] = {}
+TOPIC_LABEL_OVERRIDES: Dict[str, str] = {
+    # Curated after inspecting 20-topic run on Brazil vs Morocco (2,636 docs)
+    "morocco / brazil / marruecos": "Morocco vs Brazil Match",
+    "brazil / brasil / team": "Brazil Team Performance",
+    "href / gracias / comment": "General Comments / Threads",
+    "paraguay / que / el": "Paraguay Match Discussion",
+    "endrick / ancelotti / thiago": "Endrick / Ancelotti / Thiago Silva",
+    "team / usa / teams": "USA / Team Comparisons",
+    "speed / travis / tv": "Content Creators / Media",
+    "goal / gol / vini": "Goals / Vinicius Jr",
+    "neymar / neymar neymar / injured": "Neymar Injury / Criticism",
+    "football / futbol / el": "General Football Discussion",
+    "video / highlights / videos": "Video / Highlight Quality",
+    "argentina / los / la": "Argentina Comparison",
+    "mexico / méxico / en": "Mexico Discussion",
+    "game / partido / el": "Game Analysis / Opinions",
+    "world cup / cup / world": "World Cup General",
+    "match / old match / old": "Match Highlights Appreciation",
+    "unidos / estados unidos / estados": "United States Hosting",
+    "spanish / br / speak": "Language / Commentary",
+    "women / commentator / voice": "Female Commentator Discussion",
+    "time / años / 2026": "Time / Future Predictions",
+}
 
 # ── Sentiment analysis ──────────────────────────────────────────────────────
 SENTIMENT_COLUMNS: Dict[str, str] = {
