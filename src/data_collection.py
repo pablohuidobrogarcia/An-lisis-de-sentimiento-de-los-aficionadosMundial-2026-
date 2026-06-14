@@ -29,6 +29,7 @@ from src.config import (
     COLLECTION_TIME_BUDGET_SECONDS,
     FOOTBALL_KEYWORDS,
     MATCH_PLAYED_BUFFER_HOURS,
+    MATCH_SEARCH_WINDOW_DAYS,
     RAW_DIR,
     TARGET_TEAMS,
     TEAM_ALIASES,
@@ -56,6 +57,7 @@ CHECKPOINT_FILE: Path = CHECKPOINT_DIR / "_checkpoint_youtube.json"
 VIDEOS_FILE: Path = RAW_DIR / "youtube_videos"
 COMMENTS_FILE: Path = RAW_DIR / "youtube_comments"
 QUOTA_LOG_FILE: Path = CHECKPOINT_DIR / "_quota_usage.json"
+PROCESSED_MATCHES_FILE: Path = CHECKPOINT_DIR / "_processed_matches.json"
 
 
 # ── Quota tracking ─────────────────────────────────────────────────────────
@@ -218,6 +220,29 @@ def _save_processed_videos_batch(video_ids: Set[str]) -> None:
 
     with open(CHECKPOINT_FILE, "w") as f:
         json.dump({"processed_video_ids": sorted(video_ids)}, f, ensure_ascii=False)
+
+
+# ── Match-level checkpoint (avoid re-searching old matches) ────────────────
+
+
+def _load_processed_matches() -> Dict[str, str]:
+    """Load dict of match_key -> match_date_str for already-searched matches."""
+    if PROCESSED_MATCHES_FILE.exists():
+        import json
+
+        with open(PROCESSED_MATCHES_FILE, "r") as f:
+            return json.load(f)
+    return {}
+
+
+def _save_processed_match(match_key: str, match_date_str: str) -> None:
+    """Persist a single match as searched (incremental)."""
+    import json
+
+    matches = _load_processed_matches()
+    matches[match_key] = match_date_str
+    with open(PROCESSED_MATCHES_FILE, "w") as f:
+        json.dump(matches, f, ensure_ascii=False, indent=2)
 
 
 # ── Team detection ─────────────────────────────────────────────────────────
@@ -502,6 +527,7 @@ def collect_for_matches(
     all_videos: List[Dict[str, Any]] = []
     all_comments: List[Dict[str, Any]] = []
     processed_ids = _load_processed_videos()
+    processed_matches = _load_processed_matches()
     run_processed_videos: Set[str] = set()
     run_start = time.monotonic()
     buffer = timedelta(hours=MATCH_PLAYED_BUFFER_HOURS)
@@ -576,6 +602,23 @@ def collect_for_matches(
                 break
 
             opponent = away if team.lower() in home.lower() else home
+
+            # ── Match-level freshness check ──────────────────────────────
+            # Only call search.list (100 quota) if this match hasn't been
+            # searched before OR it's still within the freshness window.
+            match_key = f"{team}_vs_{opponent}_{date_str}"
+            if match_key in processed_matches:
+                match_dt = pd.Timestamp(date_str)
+                days_old = (pd.Timestamp.now(tz="UTC") - match_dt).days
+                if days_old > MATCH_SEARCH_WINDOW_DAYS:
+                    logger.debug(
+                        "Skipping search for %s — outside freshness window "
+                        "(%d days old), already searched",
+                        match_key,
+                        days_old,
+                    )
+                    continue
+
             logger.info(
                 "Searching videos for %s vs %s (%s)",
                 team,
@@ -586,6 +629,8 @@ def collect_for_matches(
             videos = _search_videos_for_match(
                 client, team, opponent, date_str, processed_ids
             )
+            _save_processed_match(match_key, date_str)
+            processed_matches[match_key] = date_str
             new_videos = [
                 v
                 for v in videos

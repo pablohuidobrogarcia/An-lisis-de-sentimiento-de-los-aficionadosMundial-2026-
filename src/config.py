@@ -64,6 +64,9 @@ YOUTUBE_PUBLISHED_BEFORE_DAYS: int = 3
 COLLECTION_TIME_BUDGET_SECONDS: int = 480  # 8 minutes max per run
 COLLECTION_QUOTA_BUDGET: int = 9_000  # stop before hitting the 10k daily limit
 MATCH_PLAYED_BUFFER_HOURS: int = 3  # skip matches until 3h after kickoff
+# After a match has been played and searched, skip re-searching if it's
+# older than this many days (new reaction videos are unlikely to appear).
+MATCH_SEARCH_WINDOW_DAYS: int = 3
 
 YOUTUBE_SEARCH_TEMPLATES: List[str] = [
     "{team} {opponent} world cup 2026 highlights",
