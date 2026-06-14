@@ -4,11 +4,20 @@ football-data.org API client for World Cup 2026 fixtures and results.
 Provides functions to fetch match data, map comments to the nearest match
 time window, and compute pre/post sentiment comparisons with statistical
 testing.
+
+Caching
+-------
+The API free tier (10 req/min) is respected via a file-based cache in
+``data/raw/.cache/football_data_matches.json``.  Cached responses are reused
+if they are less than 1 hour old, avoiding unnecessary API calls during
+notebook development.
 """
 
+import os
 import time
 from datetime import timedelta
-from typing import Any, Dict, List, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
 import requests
@@ -28,8 +37,17 @@ from src.utils import load_json, save_dataframe, save_json, setup_logger
 
 logger = setup_logger(__name__)
 
+# Cache config — stored in processed/ (which is gitignored) so it survives
+# across workflow runs but is never committed to the repository.
+CACHE_DIR: Path = PROCESSED_DIR / ".cache"
+CACHE_FILE: Path = CACHE_DIR / "football_data_matches.json"
+CACHE_TTL_SECONDS: int = 3600  # 1 hour
+
+# Legacy cache path for backward compatibility
 FIXTURES_CACHE_FILE = PROCESSED_DIR / "fixtures_cache.json"
 RESULTS_FILE = PROCESSED_DIR / "match_results"
+
+CACHE_DIR.mkdir(parents=True, exist_ok=True)
 
 
 # ── API client ──────────────────────────────────────────────────────────────
@@ -65,6 +83,28 @@ def _api_get(endpoint: str, params: Optional[Dict] = None) -> Dict[str, Any]:
     response = requests.get(url, headers=headers, params=params, timeout=30)
     response.raise_for_status()
     return response.json()
+
+
+def _read_cache_if_fresh() -> Optional[List[Dict[str, Any]]]:
+    """Return cached match data if it exists and is less than 1 hour old.
+
+    Returns:
+        Cached list of match dicts, or ``None`` if cache is missing/stale.
+    """
+    if not CACHE_FILE.exists():
+        return None
+    age = time.monotonic() - os.path.getmtime(CACHE_FILE)
+    if age > CACHE_TTL_SECONDS:
+        logger.debug("Cache expired (%.0fs > %ds)", age, CACHE_TTL_SECONDS)
+        return None
+    logger.info("Loading match results from cache: %s", CACHE_FILE)
+    return load_json(CACHE_FILE)
+
+
+def _write_cache(data: List[Dict[str, Any]]) -> None:
+    """Persist raw match data to the cache file."""
+    save_json(data, CACHE_FILE)
+    logger.debug("Cached %d matches to %s", len(data), CACHE_FILE)
 
 
 def fetch_matches(
@@ -134,6 +174,180 @@ def matches_to_dataframe(matches: List[Dict]) -> pd.DataFrame:
     df = pd.DataFrame(records)
     df["utc_date"] = pd.to_datetime(df["utc_date"], utc=True, errors="coerce")
     return df
+
+
+# ── New convenience API ─────────────────────────────────────────────────────
+
+
+def fetch_match_results(
+    competition_code: str = "WC",
+    season_year: Optional[int] = None,
+    use_cache: bool = True,
+) -> pd.DataFrame:
+    """Fetch match results (including final scores) for a competition.
+
+    Wraps ``fetch_matches()`` + ``matches_to_dataframe()`` with a
+    freshness check on the cache.
+
+    Args:
+        competition_code: Football-data.org competition code.
+        season_year: Season year (defaults to 2026).
+        use_cache: If ``True``, reuse cached data if less than 1 hour old.
+
+    Returns:
+        DataFrame with columns: ``match_id``, ``utc_date``, ``status``,
+        ``home_team``, ``away_team``, ``home_score``, ``away_score``,
+        ``winner``, ``stage``, ``group``.
+    """
+    if use_cache:
+        cached = _read_cache_if_fresh()
+        if cached is not None:
+            return matches_to_dataframe(cached)
+
+    matches = fetch_matches(competition_code, season_year, use_cache=False)
+    if matches:
+        _write_cache(matches)
+    return matches_to_dataframe(matches)
+
+
+def get_match_outcome(row: pd.Series, team: str) -> str:
+    """Determine the match outcome from the perspective of *team*.
+
+    Args:
+        row: A row from the matches DataFrame (must have ``home_team``,
+            ``away_team``, ``status``, ``home_score``, ``away_score``).
+        team: Team name (matched case-insensitively).
+
+    Returns:
+        ``"WIN"``, ``"LOSS"``, ``"DRAW"``, or ``"NOT_PLAYED"``.
+    """
+    status = str(row.get("status", ""))
+    if status != "FINISHED":
+        return "NOT_PLAYED"
+
+    home = str(row.get("home_team", ""))
+    away = str(row.get("away_team", ""))
+    home_score = row.get("home_score")
+    away_score = row.get("away_score")
+
+    if home_score is None or away_score is None:
+        return "NOT_PLAYED"
+
+    # Normalise team to home/away
+    if team.lower() == home.lower():
+        is_home = True
+    elif team.lower() == away.lower():
+        is_home = False
+    else:
+        # Fallback: use the existing fuzzy match from get_team_result
+        result = get_team_result(row, team)
+        return result.upper() if result != "unknown" else "NOT_PLAYED"
+
+    if home_score == away_score:
+        return "DRAW"
+    if (is_home and home_score > away_score) or (
+        not is_home and away_score > home_score
+    ):
+        return "WIN"
+    return "LOSS"
+
+
+def get_pre_post_windows(
+    match_date: pd.Timestamp,
+    window_hours: int = 24,
+) -> Tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp, pd.Timestamp]:
+    """Compute pre-match and post-match time windows.
+
+    The pre-window spans ``[match_date - window_hours, match_date)`` and the
+    post-window spans ``[match_date, match_date + window_hours]``.
+
+    .. note::
+        Comment volume tends to cluster heavily in the first few hours
+        *after* a match.  The default 24-hour window is a reasonable starting
+        point but should be tuned based on actual comment timestamp
+        distributions — narrower windows (e.g. 6–12 h) may reduce noise for
+        causal analysis.
+
+    Args:
+        match_date: The match kickoff timestamp (UTC).
+        window_hours: Size of the pre/post window in hours (default 24).
+
+    Returns:
+        ``(pre_start, pre_end, post_start, post_end)`` — all as UTC
+        timezone-aware timestamps.
+    """
+    delta = timedelta(hours=window_hours)
+    pre_start = match_date - delta
+    pre_end = match_date
+    post_start = match_date
+    post_end = match_date + delta
+    return pre_start, pre_end, post_start, post_end
+
+
+def build_match_results_summary(
+    target_teams: Optional[List[str]] = None,
+    competition_code: str = "WC",
+    use_cache: bool = True,
+) -> pd.DataFrame:
+    """Build a summary table of finished matches for the given teams.
+
+    For each finished match involving a target team, adds the outcome
+    from that team's perspective via ``get_match_outcome()``.
+
+    Args:
+        target_teams: List of team names (defaults to ``TARGET_TEAMS`` from
+            config).
+        competition_code: Football-data.org competition code.
+        use_cache: Whether to use cached data.
+
+    Returns:
+        DataFrame with columns: ``team``, ``opponent``, ``match_date``,
+        ``outcome``, ``score``, ``status``, ``stage``.
+    """
+    teams = target_teams or TARGET_TEAMS
+    matches_df = fetch_match_results(competition_code, use_cache=use_cache)
+
+    if matches_df.empty:
+        return pd.DataFrame()
+
+    records = []
+    finished = matches_df[matches_df["status"] == "FINISHED"]
+
+    for _, row in finished.iterrows():
+        for team in teams:
+            team_lower = team.lower()
+            home_lower = str(row.get("home_team", "")).lower()
+            away_lower = str(row.get("away_team", "")).lower()
+            if team_lower not in (home_lower, away_lower):
+                continue
+
+            outcome = get_match_outcome(row, team)
+            opponent = (
+                row["away_team"] if home_lower == team_lower else row["home_team"]
+            )
+            score = (
+                f"{int(row['home_score'])}-{int(row['away_score'])}"
+                if pd.notna(row.get("home_score"))
+                else "?"
+            )
+
+            records.append(
+                {
+                    "team": team,
+                    "opponent": opponent,
+                    "match_date": row["utc_date"],
+                    "outcome": outcome,
+                    "score": score,
+                    "status": row["status"],
+                    "stage": row.get("stage", ""),
+                    "match_id": row.get("match_id"),
+                }
+            )
+
+    result = pd.DataFrame(records)
+    if not result.empty:
+        result = result.sort_values("match_date").reset_index(drop=True)
+    return result
 
 
 # ── Match-sentiment integration ─────────────────────────────────────────────
