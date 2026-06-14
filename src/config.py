@@ -98,8 +98,13 @@ SPACY_MODELS: Dict[str, str] = {
     "en": "en_core_web_sm",
 }
 TOPIC_EMBEDDING_MODEL: str = "paraphrase-multilingual-MiniLM-L12-v2"
-TOPIC_MIN_TOPICS: int = 5
+TOPIC_MIN_TOPICS: int = 15
 TOPIC_MAX_TOPICS: int = 25
+
+# Manual overrides for interpretable topic labels (populate after inspecting
+# topic_model.get_topic_info() output from a real run).
+# Format: {"keyword1 / keyword2 / keyword3": "Custom Label"}
+TOPIC_LABEL_OVERRIDES: Dict[str, str] = {}
 
 # ── Sentiment analysis ──────────────────────────────────────────────────────
 SENTIMENT_COLUMNS: Dict[str, str] = {

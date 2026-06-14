@@ -24,6 +24,7 @@ from sklearn.feature_extraction.text import CountVectorizer
 from src.config import (
     SPACY_MODELS,
     TOPIC_EMBEDDING_MODEL,
+    TOPIC_LABEL_OVERRIDES,
     TOPIC_MAX_TOPICS,
     TOPIC_MIN_TOPICS,
 )
@@ -209,6 +210,106 @@ def _get_bertopic():
     return _BERTOPIC_MODEL
 
 
+# ── Topic labeling ────────────────────────────────────────────────────────────
+
+
+def name_topics_interpretably(
+    topic_model,
+    topic_info: pd.DataFrame,
+) -> Dict[int, str]:
+    """Generate human-readable labels for each topic.
+
+    Hybrid strategy:
+    1. Check for an exact match in ``TOPIC_LABEL_OVERRIDES`` (concatenated keywords).
+    2. Fall back to top-3 keywords joined by `` / ``.
+
+    Args:
+        topic_model: Fitted BERTopic model.
+        topic_info: DataFrame from ``get_topic_info()``.
+
+    Returns:
+        Dict mapping topic ID to human-readable label.
+    """
+    labels: Dict[int, str] = {}
+
+    for _, row in topic_info.iterrows():
+        tid = int(row["Topic"])
+        if tid == -1:
+            labels[tid] = "Outliers / Other"
+            continue
+
+        words = row.get("Representation", [])
+        if not isinstance(words, list) or len(words) == 0:
+            labels[tid] = f"Topic {tid}"
+            continue
+
+        key = " / ".join(words[:3])
+        # Check manual overrides first
+        if key in TOPIC_LABEL_OVERRIDES:
+            labels[tid] = TOPIC_LABEL_OVERRIDES[key]
+        else:
+            labels[tid] = key
+
+    return labels
+
+
+def build_topic_model(
+    docs: List[str],
+    language: str = "multilingual",
+    save_path: Optional[Path] = None,
+):
+    """Configure, fit, and return a BERTopic model on *docs*.
+
+    Uses the multilingual sentence-transformer embedding model so both
+    Spanish and English comments can be processed together.
+
+    Args:
+        docs: List of cleaned document strings.
+        language: Ignored (the embedding model is fixed to multilingual).
+        save_path: Optional path to save the fitted model.
+
+    Returns:
+        Tuple of ``(fitted_model, topics, probabilities)``.
+    """
+    model = _get_bertopic()
+    logger.info("Fitting BERTopic on %d documents …", len(docs))
+    topics, probs = model.fit_transform(docs)
+    n_topics = len(set(topics)) - 1  # -1 for outlier cluster
+    logger.info("BERTopic fitted: %d topics found (language=%s)", n_topics, language)
+    if save_path:
+        model.save(str(save_path), serialization="safetensors")
+        logger.info("BERTopic model saved to %s", save_path)
+    return model, topics, probs
+
+
+def topics_over_time_df(
+    model,
+    docs: List[str],
+    timestamps: pd.Series,
+) -> pd.DataFrame:
+    """Wrapper around BERTopic's ``topics_over_time``.
+
+    Args:
+        model: Fitted BERTopic model.
+        docs: Documents in the same order as used for fitting.
+        timestamps: Corresponding datetime series.
+
+    Returns:
+        DataFrame of topic prevalence over time, or empty if calculation fails.
+    """
+    try:
+        result = model.topics_over_time(
+            docs,
+            timestamps.tolist(),
+            global_tuning=True,
+            evolution_tuning=True,
+        )
+        return result
+    except Exception as exc:
+        logger.warning("topics_over_time failed: %s", exc)
+        return pd.DataFrame()
+
+
 # ── NER ─────────────────────────────────────────────────────────────────────
 
 
@@ -362,16 +463,9 @@ def get_topic_info(model) -> pd.DataFrame:
     """Return a DataFrame with topic name, size, and representative words."""
     info = model.get_topic_info()
 
-    # Add human-readable labels
-    def _label(row: Any) -> str:
-        if row["Topic"] == -1:
-            return "Outliers / Other"
-        words = row["Representation"]
-        if isinstance(words, list) and len(words) >= 3:
-            return " / ".join(words[:3])
-        return f"Topic {row['Topic']}"
+    label_map = name_topics_interpretably(model, info)
+    info["topic_label"] = info["Topic"].map(label_map).fillna("Outliers / Other")
 
-    info["topic_label"] = info.apply(_label, axis=1)
     return info
 
 
