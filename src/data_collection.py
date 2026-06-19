@@ -65,16 +65,26 @@ PROCESSED_MATCHES_FILE: Path = CHECKPOINT_DIR / "_processed_matches.json"
 
 def _load_quota_usage() -> Dict[str, Any]:
     """Load today's quota usage from disk."""
-    if QUOTA_LOG_FILE.exists():
-        import json
+    import json
 
-        with open(QUOTA_LOG_FILE, "r") as f:
-            data = json.load(f)
-        # Reset if it's a new day
-        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        if data.get("date") != today:
-            data = {"date": today, "quota_used": 0}
-        return data
+    if QUOTA_LOG_FILE.exists():
+        try:
+            content = QUOTA_LOG_FILE.read_text(encoding="utf-8").strip()
+            if not content:
+                logger.warning("Quota file %s is empty, starting fresh", QUOTA_LOG_FILE)
+            else:
+                data = json.loads(content)
+                today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                if data.get("date") != today:
+                    data = {"date": today, "quota_used": 0}
+                return data
+        except json.JSONDecodeError:
+            logger.warning(
+                "Quota file %s is corrupted, starting fresh (backing up corrupted file)",
+                QUOTA_LOG_FILE,
+            )
+            backup = QUOTA_LOG_FILE.with_suffix(".json.corrupted")
+            QUOTA_LOG_FILE.rename(backup)
     return {"date": datetime.now(timezone.utc).strftime("%Y-%m-%d"), "quota_used": 0}
 
 
@@ -196,11 +206,24 @@ def _api_call(
 
 def _load_processed_videos() -> Set[str]:
     """Load set of already-processed video IDs."""
-    if CHECKPOINT_FILE.exists():
-        import json
+    import json
 
-        with open(CHECKPOINT_FILE, "r") as f:
-            return set(json.load(f).get("processed_video_ids", []))
+    if CHECKPOINT_FILE.exists():
+        try:
+            content = CHECKPOINT_FILE.read_text(encoding="utf-8").strip()
+            if not content:
+                logger.warning(
+                    "Checkpoint file %s is empty, starting fresh", CHECKPOINT_FILE
+                )
+                return set()
+            return set(json.loads(content).get("processed_video_ids", []))
+        except json.JSONDecodeError:
+            logger.warning(
+                "Checkpoint file %s is corrupted, starting fresh (backing up corrupted file)",
+                CHECKPOINT_FILE,
+            )
+            backup = CHECKPOINT_FILE.with_suffix(".json.corrupted")
+            CHECKPOINT_FILE.rename(backup)
     return set()
 
 
@@ -227,11 +250,24 @@ def _save_processed_videos_batch(video_ids: Set[str]) -> None:
 
 def _load_processed_matches() -> Dict[str, str]:
     """Load dict of match_key -> match_date_str for already-searched matches."""
-    if PROCESSED_MATCHES_FILE.exists():
-        import json
+    import json
 
-        with open(PROCESSED_MATCHES_FILE, "r") as f:
-            return json.load(f)
+    if PROCESSED_MATCHES_FILE.exists():
+        try:
+            content = PROCESSED_MATCHES_FILE.read_text(encoding="utf-8").strip()
+            if not content:
+                logger.warning(
+                    "Matches file %s is empty, starting fresh", PROCESSED_MATCHES_FILE
+                )
+                return {}
+            return json.loads(content)
+        except json.JSONDecodeError:
+            logger.warning(
+                "Matches file %s is corrupted, starting fresh (backing up corrupted file)",
+                PROCESSED_MATCHES_FILE,
+            )
+            backup = PROCESSED_MATCHES_FILE.with_suffix(".json.corrupted")
+            PROCESSED_MATCHES_FILE.rename(backup)
     return {}
 
 

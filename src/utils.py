@@ -160,9 +160,30 @@ def load_dataframe(
 
 
 def load_json(path: Union[str, Path]) -> Dict[str, Any]:
-    """Load a JSON file and return its contents."""
-    with open(path, "r", encoding="utf-8") as fh:
-        return json.load(fh)
+    """Load a JSON file and return its contents.
+
+    Handles missing, empty, or corrupted files gracefully.
+    """
+    path = Path(path)
+    if not path.exists():
+        return {}
+    import logging
+
+    logger = logging.getLogger(__name__)
+    try:
+        content = path.read_text(encoding="utf-8").strip()
+        if not content:
+            logger.warning("JSON file %s is empty, returning {}", path)
+            return {}
+        return json.loads(content)
+    except json.JSONDecodeError:
+        logger.warning(
+            "JSON file %s is corrupted, returning {} (backing up corrupted file)",
+            path,
+        )
+        backup = path.with_suffix(".json.corrupted")
+        path.rename(backup)
+        return {}
 
 
 def save_json(data: Any, path: Union[str, Path], indent: int = 2) -> None:
