@@ -24,6 +24,10 @@ requests>=2.31.0
 streamlit>=1.28.0
 plotly>=5.18.0
 
+# ── Jupyter / Notebook execution ────────────────────────────────────────────
+jupyter>=1.0.0,<2
+nbconvert>=7.0.0,<8
+
 # ── Utilities ────────────────────────────────────────────────────────────────
 python-dotenv>=1.0.0
 pyarrow>=14.0.0

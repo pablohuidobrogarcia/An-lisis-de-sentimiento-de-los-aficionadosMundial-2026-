@@ -1,54 +1,60 @@
 # ── World Cup 2026 Sentiment Analysis — Makefile ──────────────────────────
-# Common tasks for setup, pipeline execution, testing, and formatting.
+# Cross-platform targets (Windows / Unix) using python -m where possible.
+# Uses PowerShell as the recipe shell for reliable Windows execution.
 
-.PHONY: help setup pipeline dashboard test lint format clean
+SHELL        = powershell.exe
+.SHELLFLAGS  = -NoProfile -Command
+
+.PHONY: help setup collect refresh dashboard test lint
+
+# ── OS-agnostic venv paths ─────────────────────────────────────────────────
+ifeq ($(OS),Windows_NT)
+    VENV_PYTHON     = venv\Scripts\python
+    VENV_PIP        = venv\Scripts\python -m pip
+    VENV_PRE_COMMIT = venv\Scripts\pre-commit
+    VENV_SPACY      = venv\Scripts\python -m spacy
+else
+    VENV_PYTHON     = venv/bin/python
+    VENV_PIP        = venv/bin/python -m pip
+    VENV_PRE_COMMIT = venv/bin/pre-commit
+    VENV_SPACY      = venv/bin/python -m spacy
+endif
 
 help:
 	@echo "World Cup 2026 Sentiment Analysis — Makefile"
 	@echo ""
-	@echo "  setup            Create venv, install dependencies, download spacy models"
-	@echo "  pipeline         Run the full end-to-end pipeline"
-	@echo "  pipeline-quick   Run pipeline using cached collection (skip collect)"
-	@echo "  dashboard        Launch Streamlit dashboard"
-	@echo "  test             Run pytest with coverage"
-	@echo "  lint             Run ruff linter"
-	@echo "  format           Format code with black + isort"
-	@echo "  clean            Remove cache files and build artifacts"
-	@echo "  pre-commit       Install pre-commit hooks"
+	@echo "  setup       Create venv, install requirements, download spaCy, install pre-commit"
+	@echo "  collect     Run manual collection: python -m src.pipeline --step collect"
+	@echo "  refresh     Pull data + execute notebooks 02-03-04 + commit results"
+	@echo "  dashboard   Launch Streamlit dashboard"
+	@echo "  test        Run pytest tests/ -v"
+	@echo "  lint        Run pre-commit run --all-files"
 
 setup:
 	python -m venv venv
-	. venv/bin/activate || venv\Scripts\activate
-	pip install --upgrade pip
-	pip install -r requirements.txt
-	python -m spacy download es_core_news_sm
-	python -m spacy download en_core_web_sm
-	cp -n .env.example .env || echo ".env already exists — edit it with your API keys"
+	$(VENV_PIP) install --upgrade pip
+	$(VENV_PIP) install -r requirements.txt
+	$(VENV_SPACY) download es_core_news_sm
+	$(VENV_SPACY) download en_core_web_sm
+	$(VENV_PRE_COMMIT) install
+	@echo "Setup complete."
 
-pipeline:
-	python -m src.pipeline
+collect:
+	python -m src.pipeline --step collect
 
-pipeline-quick:
-	python -m src.pipeline --skip-collect
+refresh:
+	python -m jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.timeout=1800 "notebooks/02_limpieza_preprocesamiento.ipynb"
+	python -m jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.timeout=3600 "notebooks/03_analisis_sentimiento.ipynb"
+	python -m jupyter nbconvert --to notebook --execute --inplace --ExecutePreprocessor.timeout=3600 "notebooks/04_topic_modeling_ner.ipynb"
+	git add notebooks/
+	git commit -m "data: refresh pipeline $$(Get-Date -Format 'yyyy-MM-dd')"
+	git push origin main
 
 dashboard:
 	streamlit run dashboard/app.py
 
 test:
-	python -m pytest tests/ -v --cov=src --cov-report=term-missing
+	python -m pytest tests/ -v
 
 lint:
-	ruff check src/ tests/ dashboard/ evaluation/
-
-format:
-	black src/ tests/ dashboard/ evaluation/
-	isort src/ tests/ dashboard/ evaluation/
-
-clean:
-	find . -type d -name "__pycache__" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name ".pytest_cache" -exec rm -rf {} + 2>/dev/null || true
-	find . -type d -name ".ruff_cache" -exec rm -rf {} + 2>/dev/null || true
-	rm -rf *.egg-info dist build
-
-pre-commit:
-	pre-commit install
+	pre-commit run --all-files

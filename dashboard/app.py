@@ -105,8 +105,8 @@ if not df.empty:
     if date_range and len(date_range) == 2 and "published_at" in df.columns:
         dts = pd.to_datetime(df["published_at"], utc=True, errors="coerce")
         lo = pd.Timestamp(date_range[0], tz="UTC")
-        hi = pd.Timestamp(date_range[1], tz="UTC")
-        df = df[(dts >= lo) & (dts <= hi)]
+        hi = pd.Timestamp(date_range[1], tz="UTC") + pd.Timedelta(days=1)
+        df = df[(dts >= lo) & (dts < hi)]
 
 # ── Tabs ────────────────────────────────────────────────────────────────────
 
@@ -559,7 +559,7 @@ with tab4:
         st.subheader("Marcas patrocinadoras")
         all_brands = df["brands_mentioned"].str.split(",").explode().str.strip()
         all_brands = all_brands[all_brands != ""]
-        if not all_brands.empty():
+        if not all_brands.empty:
             brand_counts = Counter(all_brands)
             brand_df = pd.DataFrame(
                 brand_counts.most_common(10), columns=["Marca", "Menciones"]
