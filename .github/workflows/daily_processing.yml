@@ -1,0 +1,99 @@
+name: Daily Processing
+
+on:
+  schedule:
+    # Run daily at 09:30 UTC — 90 min after collection starts (08:00 UTC),
+    # giving it time to finish even on slow days.
+    - cron: '30 9 * * *'
+  workflow_dispatch:
+    # Allow manual trigger for testing
+
+jobs:
+  process:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python 3.10
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Cache pip dependencies
+        uses: actions/cache@v4
+        id: pip-cache
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-pip-${{ hashFiles('requirements.txt') }}
+          restore-keys: |
+            ${{ runner.os }}-pip-
+
+      - name: Cache HuggingFace / sentence-transformers models
+        uses: actions/cache@v4
+        id: hf-cache
+        with:
+          path: ~/.cache/huggingface
+          key: ${{ runner.os }}-hf-models-v1
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          python -m spacy download es_core_news_sm
+          python -m spacy download en_core_web_sm
+
+      - name: Check if new raw data exists
+        id: check-data
+        run: |
+          RAW_TS=$(git log -1 --format=%ct -- data/raw/youtube_comments.parquet 2>/dev/null || echo "0")
+          LAST_PROC_TS=$(git log -1 --format=%ct -- notebooks/04_topic_modeling_ner.ipynb 2>/dev/null || echo "0")
+          echo "Raw data last modified: $(date -d @$RAW_TS '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo 'never')"
+          echo "Last notebook run:     $(date -d @$LAST_PROC_TS '+%Y-%m-%d %H:%M:%S' 2>/dev/null || echo 'never')"
+          if [ "$RAW_TS" -gt "$LAST_PROC_TS" ]; then
+            echo "new_data=true" >> "$GITHUB_OUTPUT"
+            echo "New raw data found — processing notebooks."
+          else
+            echo "new_data=false" >> "$GITHUB_OUTPUT"
+            echo "No new raw data since last processing run. Skipping."
+          fi
+
+      - name: Run notebook 02 — Cleaning & Preprocessing
+        if: steps.check-data.outputs.new_data == 'true'
+        run: |
+          jupyter nbconvert --to notebook --execute --inplace \
+            --ExecutePreprocessor.timeout=3600 \
+            "notebooks/02_limpieza_preprocesamiento.ipynb"
+
+      - name: Run notebook 03 — Sentiment Analysis
+        if: steps.check-data.outputs.new_data == 'true'
+        run: |
+          jupyter nbconvert --to notebook --execute --inplace \
+            --ExecutePreprocessor.timeout=3600 \
+            "notebooks/03_analisis_sentimiento.ipynb"
+
+      - name: Run notebook 04 — Topic Modeling & NER
+        if: steps.check-data.outputs.new_data == 'true'
+        env:
+          FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
+        run: |
+          jupyter nbconvert --to notebook --execute --inplace \
+            --ExecutePreprocessor.timeout=3600 \
+            "notebooks/04_topic_modeling_ner.ipynb"
+
+      - name: Commit and push processed data
+        if: steps.check-data.outputs.new_data == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add notebooks/ src/config.py
+          if git diff --quiet && git diff --staged --quiet; then
+            echo "Nothing changed after processing. Exiting cleanly."
+            exit 0
+          fi
+          git commit -m "data: automated daily processing $(date +'%Y-%m-%d')"
+          git push

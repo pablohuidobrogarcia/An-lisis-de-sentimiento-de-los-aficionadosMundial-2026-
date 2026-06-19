@@ -275,6 +275,69 @@ prevents re-scraping the same videos.
 
 ---
 
+## Automated daily processing
+
+A companion workflow (`.github/workflows/daily_processing.yml`) runs 90 minutes
+after the collection workflow (**09:30 UTC**) to process the newly collected raw
+data through the full notebook pipeline (02 → 03 → 04) and commit the enriched
+dataset back to the repository.
+
+### Two-workflow setup
+
+1. **08:00 UTC** — ``daily_collection.yml`` extracts raw YouTube comments.
+2. **09:30 UTC** — ``daily_processing.yml`` cleans, analyses sentiment, and
+   runs topic modeling + NER on the fresh data.
+
+This separation means the heavy NLP processing (BERT sentiment, BERTopic) does
+not compete with the API collection step, and each can be triggered, monitored,
+and debugged independently.
+
+### How it works
+
+1. The workflow checks out the repo (with full history for timestamp comparison)
+   and installs dependencies — pip packages are cached, and HuggingFace/sentence-
+   transformer models are cached separately under ``~/.cache/huggingface`` so
+   pysentimiento and BERTopic embedding models are not re-downloaded on every run.
+2. **Skip-if-no-new-data**: Before running any notebook, the workflow compares
+   the commit timestamps of ``data/raw/youtube_comments.parquet`` vs.
+   ``notebooks/04_topic_modeling_ner.ipynb``. If the raw data hasn't changed
+   since the last processing run, all notebook steps are skipped and the
+   workflow exits cleanly — saving runner minutes and avoiding pointless commits.
+3. If new data exists, notebooks 02–04 are executed sequentially via
+   ``jupyter nbconvert --execute``. **If any notebook fails**, the entire job
+   stops immediately — no partial/broken results are committed.
+   Each notebook has a 3600-second (1 hour) per-cell timeout.
+4. After successful execution, updated notebooks and ``src/config.py`` (topic
+   label overrides may have been updated) are committed with a message like
+   ``data: automated daily processing 2026-06-15``.
+5. A job-level timeout of **180 minutes** (3 hours) acts as a safety net — if
+   the full pipeline exceeds this (e.g. as data grows), the job fails cleanly
+   instead of hanging.
+
+### Secrets required
+
+Only ``FOOTBALL_DATA_API_KEY`` is needed in this workflow (for the
+football-data.org client used in results caching). The ``YOUTUBE_API_KEY`` secret
+is **not** required — processing does not call the YouTube API.
+
+### Manual trigger
+
+From the GitHub Actions tab, select **Daily Processing → Run workflow** to
+trigger manually. This is useful for testing after changes to the notebooks
+or configuration.
+
+### Expected runtime growth
+
+The 3-hour timeout accounts for processing time increasing as more comments
+accumulate over the group stage. If runtime consistently approaches or exceeds
+the limit, consider:
+- Splitting notebook 04's temporal evolution cell (``topics_over_time``) into
+  an optional / skip-on-CI step.
+- Reducing the BERTopic ``TOPIC_MIN_TOPICS`` / ``TOPIC_MAX_TOPICS`` range to
+  speed up clustering.
+
+---
+
 ## Estructura del repositorio
 
 ```
