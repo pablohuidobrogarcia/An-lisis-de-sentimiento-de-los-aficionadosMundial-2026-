@@ -23,6 +23,7 @@ requests>=2.31.0
 # ── Visualization & Dashboard ────────────────────────────────────────────────
 streamlit>=1.28.0
 plotly>=5.18.0
+matplotlib>=3.7.0
 
 # ── Jupyter / Notebook execution ────────────────────────────────────────────
 jupyter>=1.0.0,<2
