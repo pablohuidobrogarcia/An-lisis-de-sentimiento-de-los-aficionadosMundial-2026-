@@ -286,24 +286,47 @@ def topics_over_time_df(
     model,
     docs: List[str],
     timestamps: pd.Series,
+    nr_bins: int = 20,
+    global_tuning: bool = False,
+    evolution_tuning: bool = False,
 ) -> pd.DataFrame:
     """Wrapper around BERTopic's ``topics_over_time``.
+
+    Performance notes
+    -----------------
+    - ``global_tuning=True`` makes each bin's c-TF-IDF depend on all others,
+      which scales **O(n_bins x bin_size)** and is very slow for >50 bins.
+      Keep ``False`` unless the temporal smoothing is essential.
+    - ``evolution_tuning=True`` adds additional pairwise computation between
+      consecutive bins (another multiplier). Keep ``False``.
+    - *nr_bins* caps the number of equal-width time bins.  BERTopic defaults
+      to one bin per unique timestamp (can be 10 000+); setting *nr_bins* to
+      20-48 provides a 10-100x speedup.
 
     Args:
         model: Fitted BERTopic model.
         docs: Documents in the same order as used for fitting.
         timestamps: Corresponding datetime series.
+        nr_bins: Number of equal-width time bins.  Default 20.  Pass 0 or a
+            negative value to let BERTopic auto-detect (not recommended for
+            large datasets).  Recommended: 20-48 for a multi-week span.
+        global_tuning: Whether to use global c-TF-IDF tuning (slow).
+            Default ``False``.
+        evolution_tuning: Whether to compute evolutionary c-TF-IDF (slower).
+            Default ``False``.
 
     Returns:
         DataFrame of topic prevalence over time, or empty if calculation fails.
     """
     try:
-        result = model.topics_over_time(
-            docs,
-            timestamps.tolist(),
-            global_tuning=True,
-            evolution_tuning=True,
-        )
+        kwargs: Dict[str, Any] = {
+            "global_tuning": global_tuning,
+            "evolution_tuning": evolution_tuning,
+        }
+        if nr_bins is not None and nr_bins > 0:
+            kwargs["nr_bins"] = nr_bins
+
+        result = model.topics_over_time(docs, timestamps.tolist(), **kwargs)
         return result
     except Exception as exc:
         logger.warning("topics_over_time failed: %s", exc)
@@ -473,29 +496,36 @@ def topics_over_time(
     model,
     texts: List[str],
     timestamps: List[pd.Timestamp],
+    nr_bins: int = 20,
+    global_tuning: bool = False,
+    evolution_tuning: bool = False,
 ) -> pd.DataFrame:
     """Compute topic prevalence over time.
+
+    Accepts the same performance-tuning parameters as
+    :func:`topics_over_time_df`.  See that function for details.
 
     Args:
         model: Fitted BERTopic model.
         texts: Documents (same order as used for fitting).
         timestamps: Corresponding datetime stamps.
+        nr_bins: Number of equal-width time bins.  Default 20.
+        global_tuning: Whether to use global c-TF-IDF tuning.
+        evolution_tuning: Whether to compute evolutionary c-TF-IDF.
 
     Returns:
         DataFrame with columns ``Topic``, ``Timestamp``, ``Frequency``,
         ``Words``, and ``topic_label``.
     """
-    try:
-        topics_over_time_df = model.topics_over_time(
-            texts,
-            timestamps,
-            global_tuning=True,
-            evolution_tuning=True,
-        )
-        return topics_over_time_df
-    except Exception as exc:
-        logger.warning("topics_over_time failed: %s", exc)
-        return pd.DataFrame()
+    ts_series = pd.Series(timestamps)
+    return topics_over_time_df(
+        model,
+        texts,
+        ts_series,
+        nr_bins=nr_bins,
+        global_tuning=global_tuning,
+        evolution_tuning=evolution_tuning,
+    )
 
 
 def add_topics_to_dataframe(

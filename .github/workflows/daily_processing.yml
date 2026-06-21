@@ -82,7 +82,7 @@ jobs:
           FOOTBALL_DATA_API_KEY: ${{ secrets.FOOTBALL_DATA_API_KEY }}
         run: |
           jupyter nbconvert --to notebook --execute --inplace \
-            --ExecutePreprocessor.timeout=3600 \
+            --ExecutePreprocessor.timeout=5400 \
             "notebooks/04_topic_modeling_ner.ipynb"
 
       - name: Commit and push processed data
