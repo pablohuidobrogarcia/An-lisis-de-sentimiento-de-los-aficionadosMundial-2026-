@@ -416,10 +416,23 @@ def assign_matches_to_comments(
         return comments_df
 
     comments_df = comments_df.copy()
+    # Drop any enrichment columns that may already exist (e.g. from re-runs)
+    for col in [
+        "match_id",
+        "match_date",
+        "team_result",
+        "pre_post",
+        "_match_id",
+        "_match_date",
+        "_team_result",
+        "_pre_post",
+    ]:
+        if col in comments_df.columns:
+            comments_df.drop(columns=[col], inplace=True)
     comments_df["_match_id"] = None
     comments_df["_match_date"] = None
     comments_df["_team_result"] = None
-    comments_df["pre_post"] = None
+    comments_df["_pre_post"] = None
 
     for _, match_row in matches_df.iterrows():
         match_date = match_row["utc_date"]
@@ -451,23 +464,25 @@ def assign_matches_to_comments(
                 & comments_df["_match_id"].isna()
             )
 
-            pre_post_val = (
-                "pre"
-                if pd.to_datetime(comments_df.loc[mask, date_column], utc=True)
-                < match_date
-                else "post"
+            # Vectorised pre/post assignment — supports multiple matched rows
+            comment_dates = pd.to_datetime(
+                comments_df.loc[mask, date_column], utc=True, errors="coerce"
+            )
+            is_pre = comment_dates < match_date
+            comments_df.loc[mask, "_pre_post"] = is_pre.map(
+                {True: "pre", False: "post"}
             )
 
             comments_df.loc[mask, "_match_id"] = match_row["match_id"]
             comments_df.loc[mask, "_match_date"] = match_date
             comments_df.loc[mask, "_team_result"] = result
-            comments_df.loc[mask, "pre_post"] = pre_post_val
 
     comments_df.rename(
         columns={
             "_match_id": "match_id",
             "_match_date": "match_date",
             "_team_result": "team_result",
+            "_pre_post": "pre_post",
         },
         inplace=True,
     )
@@ -514,7 +529,7 @@ def compute_sentiment_shift(
 
     for team in TARGET_TEAMS:
         team_mask = df["teams"].str.contains(team, case=False, na=False)
-        team_df = df[team_mask & df["_match_id"].notna()].copy()
+        team_df = df[team_mask & df["match_id"].notna()].copy()
 
         if team_df.empty:
             continue
