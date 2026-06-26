@@ -30,6 +30,11 @@ build/
 # the repository with derived artifacts.
 data/processed/*
 !data/processed/.gitkeep
+# Track sentiment results so CI can do incremental BERT inference
+# instead of processing the full dataset every run (~7 MB parquet).
+!data/processed/comentarios_sentimiento/
+data/processed/comentarios_sentimiento/*
+!data/processed/comentarios_sentimiento/comentarios_sentimiento.parquet
 
 # ── Models ───────────────────────────────────────────────────────────────────
 models/

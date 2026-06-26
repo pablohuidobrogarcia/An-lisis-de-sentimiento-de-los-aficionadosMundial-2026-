@@ -25,12 +25,13 @@ a unified ``(label, scores_dict)`` result. The pipeline handles the model
 dispatch internally.
 """
 
-from typing import Dict, List
+from pathlib import Path
+from typing import Dict, List, Optional
 
 import pandas as pd
 from tqdm.auto import tqdm
 
-from src.utils import setup_logger
+from src.utils import load_dataframe, setup_logger
 
 logger = setup_logger(__name__)
 
@@ -373,6 +374,93 @@ def apply_sentiment_pipeline(
     result["sentiment_baseline"] = base_labels
     logger.info("Sentiment pipeline complete: %d comments", n_total)
     return result
+
+
+# ── Incremental pipeline ────────────────────────────────────────────────────
+
+
+def apply_sentiment_incremental(
+    df_new: pd.DataFrame,
+    existing_path: Optional[Path] = None,
+    text_col: str = "text_clean",
+    lang_col: str = "language",
+    show_progress: bool = True,
+) -> pd.DataFrame:
+    """Run BERT sentiment only on new comments, merging with existing results.
+
+    Loads previously computed sentiment from ``existing_path`` (parquet),
+    identifies rows in ``df_new`` not yet present (by ``comment_id``), runs
+    ``apply_sentiment_pipeline()`` on only those rows, and returns the
+    combined DataFrame.
+
+    Args:
+        df_new: Freshly cleaned comments (output of notebook 02).
+        existing_path: Path to an existing parquet with sentiment columns.
+            If ``None`` or the file does not exist, runs on the full dataset.
+        text_col: Cleaned-text column name.
+        lang_col: Language column name.
+        show_progress: Show a ``tqdm`` progress bar.
+
+    Returns:
+        DataFrame with sentiment columns appended.
+    """
+    if df_new.empty:
+        return df_new
+
+    if existing_path is not None and existing_path.exists():
+        df_existing = load_dataframe(existing_path)
+        logger.info(
+            "Loaded %d existing sentiment results from %s",
+            len(df_existing),
+            existing_path,
+        )
+    else:
+        df_existing = None
+        logger.info("No existing sentiment results found — full processing.")
+
+    if df_existing is not None and "comment_id" in df_existing.columns:
+        existing_ids = set(df_existing["comment_id"].unique())
+        new_ids = set(df_new["comment_id"].unique())
+        already_known = existing_ids & new_ids
+        truly_new_ids = new_ids - existing_ids
+        n_known = len(already_known)
+        n_new = len(truly_new_ids)
+
+        if n_known > 0 and n_new == 0:
+            logger.info(
+                "All %d comments already have sentiment labels — nothing to do.",
+                n_known,
+            )
+            return df_existing
+
+        logger.info(
+            "%d comments already have sentiment labels, running BERT on %d new comments only.",
+            n_known,
+            n_new,
+        )
+
+        df_to_process = df_new[df_new["comment_id"].isin(truly_new_ids)].copy()
+        df_processed = apply_sentiment_pipeline(
+            df_to_process,
+            text_col=text_col,
+            lang_col=lang_col,
+            show_progress=show_progress,
+        )
+        df_combined = pd.concat([df_existing, df_processed], ignore_index=True)
+    else:
+        logger.info("No existing results or no comment_id — running on full dataset.")
+        df_combined = apply_sentiment_pipeline(
+            df_new,
+            text_col=text_col,
+            lang_col=lang_col,
+            show_progress=show_progress,
+        )
+
+    logger.info(
+        "Incremental merge complete — total: %d comments.",
+        len(df_combined),
+    )
+    return df_combined
 
 
 # ── Legacy API (backward compatible) ───────────────────────────────────────
