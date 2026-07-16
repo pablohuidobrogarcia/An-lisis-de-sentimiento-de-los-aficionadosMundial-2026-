@@ -93,7 +93,7 @@ def _read_cache_if_fresh() -> Optional[List[Dict[str, Any]]]:
     """
     if not CACHE_FILE.exists():
         return None
-    age = time.monotonic() - os.path.getmtime(CACHE_FILE)
+    age = time.time() - os.path.getmtime(CACHE_FILE)
     if age > CACHE_TTL_SECONDS:
         logger.debug("Cache expired (%.0fs > %ds)", age, CACHE_TTL_SECONDS)
         return None

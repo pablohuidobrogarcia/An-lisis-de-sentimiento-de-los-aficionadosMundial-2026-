@@ -217,7 +217,7 @@ with tab1:
             ]
         )
         fig.update_layout(title="Distribucion General de Sentimiento")
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     with col_b:
         if "search_team" in df.columns:
@@ -244,7 +244,7 @@ with tab1:
                     xaxis_title="Seleccion",
                     yaxis_title="Proporcion",
                 )
-                st.plotly_chart(fig, use_container_width=True)
+                st.plotly_chart(fig, width="stretch")
 
     # Topic overview on executive summary
     if "topic_label" in df.columns:
@@ -261,7 +261,7 @@ with tab1:
             color_continuous_scale="Blues",
         )
         fig.update_layout(yaxis={"categoryorder": "total ascending"})
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
 # ═════════════════════════════════════════════════════════════════════════════
 # TAB 2 — Evolucion temporal
@@ -344,7 +344,7 @@ with tab2:
                 yaxis_title="Proporcion",
                 hovermode="x unified",
             )
-            st.plotly_chart(fig, use_container_width=True)
+            st.plotly_chart(fig, width="stretch")
         else:
             st.warning("No hay suficientes datos para la escala temporal seleccionada.")
 
@@ -394,7 +394,7 @@ with tab3:
         xaxis_title="Seleccion",
         yaxis_title="Proporcion",
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Radar chart (only if 2+ teams)
     if len(unique_teams) >= 2:
@@ -429,7 +429,7 @@ with tab3:
             title="Perfil Comparativo por Seleccion",
             polar=dict(radialaxis=dict(visible=True, range=[0, 1])),
         )
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width="stretch")
 
     # Basic stats table
     st.subheader("Estadisticas por Seleccion")
@@ -448,7 +448,7 @@ with tab3:
                 else "N/A",
             }
         )
-    st.dataframe(pd.DataFrame(stats_list), use_container_width=True)
+    st.dataframe(pd.DataFrame(stats_list), width="stretch")
 
 # ═════════════════════════════════════════════════════════════════════════════
 # TAB 4 — Temas
@@ -486,7 +486,7 @@ with tab4:
         color_continuous_scale="Viridis",
     )
     fig.update_layout(yaxis={"categoryorder": "total ascending"})
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Topic x sentiment stacked bar
     st.subheader("Sentimiento por Tema")
@@ -512,7 +512,7 @@ with tab4:
         yaxis_title="",
         height=max(300, len(ct) * 25),
     )
-    st.plotly_chart(fig, use_container_width=True)
+    st.plotly_chart(fig, width="stretch")
 
     # Topic selector — show sample comments
     topic_list = sorted(df["topic_label"].unique())
@@ -522,7 +522,7 @@ with tab4:
     topic_samples = df[df["topic_label"] == selected_topic][
         ["text_clean", "sentiment_bert", "language", "search_team"]
     ].head(10)
-    st.dataframe(topic_samples, use_container_width=True)
+    st.dataframe(topic_samples, width="stretch")
 
     # Entities table
     st.subheader("Jugadores mas mencionados")
@@ -548,7 +548,7 @@ with tab4:
                         "NEG": f"{(subset['sentiment_bert'] == 'NEG').mean():.0%}",
                     }
                 )
-            st.dataframe(pd.DataFrame(player_sent_rows), use_container_width=True)
+            st.dataframe(pd.DataFrame(player_sent_rows), width="stretch")
         else:
             st.info("No se detectaron jugadores en los datos actuales.")
     else:
@@ -564,7 +564,7 @@ with tab4:
             brand_df = pd.DataFrame(
                 brand_counts.most_common(10), columns=["Marca", "Menciones"]
             )
-            st.dataframe(brand_df, use_container_width=True)
+            st.dataframe(brand_df, width="stretch")
 
 # ═════════════════════════════════════════════════════════════════════════════
 # TAB 5 — Impacto de resultados
@@ -604,7 +604,7 @@ with tab5:
     mr_display["match_date"] = pd.to_datetime(mr_display["match_date"]).dt.strftime(
         "%Y-%m-%d %H:%M"
     )
-    st.dataframe(mr_display, use_container_width=True)
+    st.dataframe(mr_display, width="stretch")
 
     # For each match, compute pre/post sentiment
     st.subheader("Sentimiento antes vs. despues")
@@ -665,7 +665,7 @@ with tab5:
                         title=f"Antes (n={len(pre_df)})",
                         height=300,
                     )
-                    st.plotly_chart(fig_pre, use_container_width=True)
+                    st.plotly_chart(fig_pre, width="stretch")
 
                 with col2:
                     fig_post = go.Figure(
@@ -687,7 +687,7 @@ with tab5:
                         title=f"Despues (n={len(post_df)})",
                         height=300,
                     )
-                    st.plotly_chart(fig_post, use_container_width=True)
+                    st.plotly_chart(fig_post, width="stretch")
 
                 # Pre/post grouped bar
                 bar_df = pd.DataFrame(
@@ -723,7 +723,7 @@ with tab5:
                     yaxis_title="Proporcion",
                     height=300,
                 )
-                st.plotly_chart(fig_bar, use_container_width=True)
+                st.plotly_chart(fig_bar, width="stretch")
 
                 # Statistical test (Mann-Whitney)
                 try:
