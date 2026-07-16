@@ -35,6 +35,10 @@ data/processed/*
 !data/processed/comentarios_sentimiento/
 data/processed/comentarios_sentimiento/*
 !data/processed/comentarios_sentimiento/comentarios_sentimiento.parquet
+# Track topic modeling + NER results for the dashboard
+!data/processed/comentarios_topics_ner/
+data/processed/comentarios_topics_ner/*
+!data/processed/comentarios_topics_ner/comentarios_topics_ner.parquet
 
 # ── Models ───────────────────────────────────────────────────────────────────
 models/
