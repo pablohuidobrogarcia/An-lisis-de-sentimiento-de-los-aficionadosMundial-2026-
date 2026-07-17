@@ -66,6 +66,7 @@ TIMESTAMP_PATTERN: re.Pattern = re.compile(r"\b\d{1,2}:\d{2}\b")
 REPEATING_CHARS: re.Pattern = re.compile(r"(.)\1{3,}")
 STRIP_LEADING_DASH: re.Pattern = re.compile(r"^[\s\-•*]+")
 STRIP_TRAILING_DASH: re.Pattern = re.compile(r"[\s\-•*]+$")
+HTML_TAG_PATTERN: re.Pattern = re.compile(r"<[^>]+>")
 
 # ── Spam / signal detection ─────────────────────────────────────────────────
 
@@ -206,6 +207,7 @@ def clean_text(text: str) -> str:
         Cleaned text with emojis preserved.
     """
     text = html.unescape(text)
+    text = HTML_TAG_PATTERN.sub(" ", text)
     text = URL_PATTERN.sub("", text)
     text = MENTION_PATTERN.sub("", text)
     text = TIMESTAMP_PATTERN.sub("", text)

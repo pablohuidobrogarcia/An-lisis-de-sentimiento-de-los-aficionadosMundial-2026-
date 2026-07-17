@@ -19,7 +19,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
-from sklearn.feature_extraction.text import CountVectorizer
+from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, CountVectorizer
 
 from src.config import (
     SPACY_MODELS,
@@ -31,6 +31,102 @@ from src.config import (
 from src.utils import setup_logger
 
 logger = setup_logger(__name__)
+
+# ── Stop words (English + Spanish) ───────────────────────────────────────────
+_SPANISH_STOP_WORDS: set = {
+    "a",
+    "al",
+    "algo",
+    "algunas",
+    "algunos",
+    "ante",
+    "antes",
+    "como",
+    "con",
+    "contra",
+    "cual",
+    "cuando",
+    "de",
+    "del",
+    "desde",
+    "donde",
+    "durante",
+    "e",
+    "el",
+    "ella",
+    "ellas",
+    "ellos",
+    "en",
+    "entre",
+    "era",
+    "erais",
+    "eran",
+    "eras",
+    "eres",
+    "es",
+    "esa",
+    "esas",
+    "ese",
+    "eso",
+    "esos",
+    "esta",
+    "estaba",
+    "estaban",
+    "estado",
+    "estamos",
+    "estan",
+    "estar",
+    "estas",
+    "este",
+    "esto",
+    "estos",
+    "etc",
+    "fue",
+    "han",
+    "has",
+    "hasta",
+    "hay",
+    "la",
+    "las",
+    "lo",
+    "los",
+    "más",
+    "menos",
+    "mi",
+    "muy",
+    "ni",
+    "no",
+    "nos",
+    "o",
+    "os",
+    "para",
+    "pero",
+    "por",
+    "porque",
+    "que",
+    "se",
+    "sí",
+    "sido",
+    "sin",
+    "sobre",
+    "son",
+    "su",
+    "tal",
+    "tan",
+    "tanto",
+    "te",
+    "tiene",
+    "todo",
+    "todos",
+    "un",
+    "una",
+    "unas",
+    "unos",
+    "va",
+    "y",
+    "ya",
+    "él",
+}
 
 # ── Lazy-loaded singletons ──────────────────────────────────────────────────
 _BERTOPIC_MODEL = None
@@ -191,7 +287,7 @@ def _get_bertopic():
 
             embedding_model = SentenceTransformer(TOPIC_EMBEDDING_MODEL)
             vectorizer = CountVectorizer(
-                stop_words="english",  # vectorizer-level stop words
+                stop_words=list(ENGLISH_STOP_WORDS) + list(_SPANISH_STOP_WORDS),
                 ngram_range=(1, 2),
             )
 
