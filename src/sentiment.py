@@ -25,6 +25,7 @@ a unified ``(label, scores_dict)`` result. The pipeline handles the model
 dispatch internally.
 """
 
+import importlib.metadata
 from pathlib import Path
 from typing import Dict, List, Optional
 
@@ -38,6 +39,23 @@ logger = setup_logger(__name__)
 # ── Lazy-loaded model singletons (per language) ────────────────────────────
 _PYSENTIMIENTO: Dict[str, object] = {}
 _VADER = None
+
+# ── Model version traceability (for TFG methodology) ────────────────────────
+_SENTIMENT_MODEL_VERSION: Dict[str, str] = {}
+
+
+def get_sentiment_model_version(lang: str) -> str:
+    """Return a traceability string for the model that processed *lang*.
+
+    Format: ``"pysentimiento_<version>|<model_checkpoint>"``
+
+    Args:
+        lang: ``"es"`` or ``"en"``.
+
+    Returns:
+        Version string, or ``"unknown"`` if not yet loaded.
+    """
+    return _SENTIMENT_MODEL_VERSION.get(lang, "unknown")
 
 
 def _get_pysentimiento(lang: str):
@@ -55,7 +73,16 @@ def _get_pysentimiento(lang: str):
             from pysentimiento import create_analyzer
 
             _PYSENTIMIENTO[lang] = create_analyzer(task="sentiment", lang=lang)
-            logger.info("pysentimiento analyzer loaded for lang=%s", lang)
+            model_checkpoint = _PYSENTIMIENTO[lang].model.config._name_or_path
+            lib_version = importlib.metadata.version("pysentimiento")
+            _SENTIMENT_MODEL_VERSION[
+                lang
+            ] = f"pysentimiento_{lib_version}|{model_checkpoint}"
+            logger.info(
+                "pysentimiento analyzer loaded for lang=%s (model=%s)",
+                lang,
+                model_checkpoint,
+            )
         except Exception as exc:
             logger.warning("pysentimiento unavailable for lang=%s: %s", lang, exc)
             _PYSENTIMIENTO[lang] = None
@@ -287,6 +314,8 @@ def apply_sentiment_pipeline(
     - ``sentiment_bert``: POS / NEG / NEU label from pysentimiento.
     - ``sentiment_bert_probas``: JSON string of probability scores.
     - ``sentiment_baseline``: POS / NEG / NEU label from baseline.
+    - ``sentiment_model_version``: Model checkpoint identifier
+      (e.g. ``"pysentimiento_0.7.3|pysentimiento/robertuito-sentiment-analysis"``).
 
     Uses batch inference (grouped by language) when possible.
 
@@ -306,6 +335,7 @@ def apply_sentiment_pipeline(
     bert_labels: List[str] = []
     bert_probas: List[str] = []
     base_labels: List[str] = []
+    model_versions: List[str] = []
     n_total = len(result)
 
     if show_progress:
@@ -335,6 +365,7 @@ def apply_sentiment_pipeline(
                 label = "NEU"
             bert_labels.append(label)
             bert_probas.append(str(s))
+        model_versions.extend([get_sentiment_model_version(lang)] * len(scores_list))
 
         # Baseline
         for t in texts:
@@ -362,6 +393,7 @@ def apply_sentiment_pipeline(
         bert_labels.extend(["NEU"] * n_other)
         bert_probas.extend(['{"neutral": 1.0}'] * n_other)
         base_labels.extend(["NEU"] * n_other)
+        model_versions.extend(["unknown"] * n_other)
         if show_progress:
             pbar.update(n_other)
         logger.info("Assigned NEU default to %d comments (unsupported lang)", n_other)
@@ -372,6 +404,7 @@ def apply_sentiment_pipeline(
     result["sentiment_bert"] = bert_labels
     result["sentiment_bert_probas"] = bert_probas
     result["sentiment_baseline"] = base_labels
+    result["sentiment_model_version"] = model_versions
     logger.info("Sentiment pipeline complete: %d comments", n_total)
     return result
 
