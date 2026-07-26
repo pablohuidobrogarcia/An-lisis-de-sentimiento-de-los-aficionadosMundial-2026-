@@ -3,13 +3,13 @@ Unified sentiment analysis pipeline supporting Spanish and English.
 
 Architecture
 ------------
-- **Primary model** (ES + EN): ``pysentimiento`` BERT-based classifiers,
-  fine-tuned on social-media text. Single dependency for both languages.
-  *Rationale*: pysentimiento 0.7+ includes both Spanish (``pysentimiento/
-  bert-base-spanish-wwm-uncased``) and English (``cardiffnlp/twitter-
-  roberta-base-sentiment``) models under a unified API. Using the same
-  library for both languages avoids maintaining separate model-loading
-  paths and enables consistent batch inference.
+- **Primary model** (ES + EN): Fine-tuned version of
+  ``cardiffnlp/twitter-xlm-roberta-base-sentiment``, trained on 2,788
+  manually labeled YouTube comments from the 2026 World Cup dataset
+  (partial freeze of last 4 layers + classifier head). Loaded from
+  ``models/sentiment_finetuned_v1/``.
+- **Fallback**: ``pysentimiento`` BERT-based classifiers for both
+  languages, used if the local fine-tuned model is unavailable.
 - **Baseline** (EN): VADER — a lexicon/rule-based model. Fast,
   interpretable, but misses sarcasm and context.
 - **Baseline** (ES): A Spanish polarity-lexicon approach using a simple
@@ -36,9 +36,28 @@ from src.utils import load_dataframe, setup_logger
 
 logger = setup_logger(__name__)
 
-# ── Lazy-loaded model singletons (per language) ────────────────────────────
+# ── Optional dependencies (finetuned model) ────────────────────────────────
+try:
+    import torch
+    import torch.nn.functional as F
+    from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
+    _HF_AVAILABLE = True
+except ImportError:
+    _HF_AVAILABLE = False
+
+
+# ── Finetuned model path and version ────────────────────────────────────────
+_FINETUNED_MODEL_PATH: str = str(
+    Path(__file__).resolve().parent.parent / "models" / "sentiment_finetuned_v1"
+)
+_FINETUNED_VERSION_STR: str = "cardiffnlp-finetuned-v1|epoch4|DDA4BD3225D1"
+
+# ── Lazy-loaded model singletons ───────────────────────────────────────────
 _PYSENTIMIENTO: Dict[str, object] = {}
 _VADER = None
+_FINETUNED_MODEL = None
+_FINETUNED_TOKENIZER = None
 
 # ── Model version traceability (for TFG methodology) ────────────────────────
 _SENTIMENT_MODEL_VERSION: Dict[str, str] = {}
@@ -47,7 +66,8 @@ _SENTIMENT_MODEL_VERSION: Dict[str, str] = {}
 def get_sentiment_model_version(lang: str) -> str:
     """Return a traceability string for the model that processed *lang*.
 
-    Format: ``"pysentimiento_<version>|<model_checkpoint>"``
+    Format (finetuned): ``"cardiffnlp-finetuned-v1|epoch4|<hash>"``
+    Format (pysentimiento): ``"pysentimiento_<version>|<model_checkpoint>"``
 
     Args:
         lang: ``"es"`` or ``"en"``.
@@ -105,6 +125,80 @@ def _get_vader():
         except Exception as exc:
             logger.warning("VADER unavailable: %s", exc)
     return _VADER
+
+
+# ── Finetuned model (production) ──────────────────────────────────────────
+
+
+def _get_finetuned_model():
+    """Load and return the fine-tuned XLM-RoBERTa sentiment model.
+
+    Loads from ``models/sentiment_finetuned_v1/`` (HuggingFace ``safetensors``
+    format). Falls back to ``None`` if the directory or dependencies are
+    missing, allowing the pipeline to degrade gracefully to pysentimiento.
+    """
+    global _FINETUNED_MODEL, _FINETUNED_TOKENIZER
+    if _FINETUNED_MODEL is None and _HF_AVAILABLE:
+        model_path = _FINETUNED_MODEL_PATH
+        if not Path(model_path).exists():
+            logger.warning("Finetuned model path not found: %s", model_path)
+            return None
+        try:
+            _FINETUNED_TOKENIZER = AutoTokenizer.from_pretrained(model_path)
+            _FINETUNED_MODEL = AutoModelForSequenceClassification.from_pretrained(
+                model_path,
+                num_labels=3,
+                id2label={0: "NEG", 1: "NEU", 2: "POS"},
+                label2id={"NEG": 0, "NEU": 1, "POS": 2},
+                ignore_mismatched_sizes=True,
+            )
+            _FINETUNED_MODEL.eval()
+            logger.info("Finetuned model loaded from %s", model_path)
+            _SENTIMENT_MODEL_VERSION["en"] = _FINETUNED_VERSION_STR
+            _SENTIMENT_MODEL_VERSION["es"] = _FINETUNED_VERSION_STR
+        except Exception as exc:
+            logger.warning("Failed to load finetuned model: %s", exc)
+    return _FINETUNED_MODEL
+
+
+def _predict_finetuned(text: str):
+    """Predict sentiment using the fine-tuned model (single text)."""
+    model = _get_finetuned_model()
+    if model is None:
+        return None
+    inputs = _FINETUNED_TOKENIZER(
+        text,
+        return_tensors="pt",
+        truncation=True,
+        padding="max_length",
+        max_length=128,
+    )
+    with torch.no_grad():
+        logits = model(**inputs).logits
+        probs = F.softmax(logits, dim=-1).squeeze().tolist()
+    return {
+        "positive": probs[2],
+        "negative": probs[0],
+        "neutral": probs[1],
+    }
+
+
+def _batch_finetuned(texts: List[str]):
+    """Predict sentiment using the fine-tuned model (batch)."""
+    model = _get_finetuned_model()
+    if model is None:
+        return None
+    inputs = _FINETUNED_TOKENIZER(
+        texts,
+        return_tensors="pt",
+        truncation=True,
+        padding="max_length",
+        max_length=128,
+    )
+    with torch.no_grad():
+        logits = model(**inputs).logits
+        probs = F.softmax(logits, dim=-1).tolist()
+    return [{"positive": p[2], "negative": p[0], "neutral": p[1]} for p in probs]
 
 
 # ── Spanish polarity lexicon ───────────────────────────────────────────────
@@ -186,6 +280,9 @@ _NEGATIVE_WORDS_ES: set = {
 
 
 def _predict_pysentimiento(text: str, lang: str) -> Dict[str, float]:
+    result = _predict_finetuned(text)
+    if result is not None:
+        return result
     analyzer = _get_pysentimiento(lang)
     if analyzer is None:
         raise RuntimeError(f"pysentimiento not available for lang={lang}")
@@ -279,12 +376,15 @@ def predict_sentiment_baseline(text: str, lang: str) -> Dict[str, float]:
 
 
 def _batch_pysentimiento(texts: List[str], lang: str) -> List[Dict[str, float]]:
-    """Run pysentimiento batch inference.
+    """Run batch inference — finetuned model first, then pysentimiento fallback.
 
     pysentimiento's ``analyzer.predict()`` accepts a list of texts and
     returns a list of ``AnalyzerOutput`` objects — much faster than
     row-by-row ``.apply()``.
     """
+    result = _batch_finetuned(texts)
+    if result is not None:
+        return result
     analyzer = _get_pysentimiento(lang)
     if analyzer is None:
         raise RuntimeError(f"pysentimiento not available for lang={lang}")

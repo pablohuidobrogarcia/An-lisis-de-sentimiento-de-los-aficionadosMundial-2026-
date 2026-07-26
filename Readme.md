@@ -107,6 +107,11 @@ graph TD
 git clone https://github.com/tu-usuario/mundial2026-sentiment-analysis.git
 cd mundial2026-sentiment-analysis
 
+# 1b. Git LFS (necesario para el modelo fine-tuned ~1 GB)
+#     Instalar desde https://git-lfs.com si no está disponible
+git lfs install
+git lfs pull
+
 # 2. Entorno virtual
 python -m venv venv
 # Linux/macOS:

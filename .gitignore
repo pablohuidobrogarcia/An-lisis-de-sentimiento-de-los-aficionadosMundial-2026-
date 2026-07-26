@@ -41,11 +41,15 @@ data/processed/comentarios_topics_ner/*
 !data/processed/comentarios_topics_ner/comentarios_topics_ner.parquet
 
 # ── Models ───────────────────────────────────────────────────────────────────
-models/
+# Ignore all model directories by default (downloaded HF checkpoints, etc.)
+models/*
 *.bin
 *.pt
 *.pth
 *.safetensors
+# Exception: track our own finetuned artifact (unique, not downloadable)
+!models/sentiment_finetuned_v1/
+!models/sentiment_finetuned_v1/*
 
 # ── Logs ─────────────────────────────────────────────────────────────────────
 *.log
