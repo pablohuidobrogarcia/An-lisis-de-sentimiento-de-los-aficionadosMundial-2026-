@@ -258,6 +258,14 @@ def get_pre_post_windows(
 ) -> Tuple[pd.Timestamp, pd.Timestamp, pd.Timestamp, pd.Timestamp]:
     """Compute pre-match and post-match time windows.
 
+    .. caution::
+        This function is no longer called from the dashboard.  The pre/post
+        match sentiment slopegraph (Tab 6) was removed because low-volume
+        windows (e.g. Spain SF with only 6 pre-match comments under the old
+        threshold of 5) produced statistically unreliable swings.  Even after
+        raising the threshold to N>=30, the number of surviving matches was
+        too small to justify the section.
+
     The pre-window spans ``[match_date - window_hours, match_date)`` and the
     post-window spans ``[match_date, match_date + window_hours]``.
 
@@ -267,6 +275,16 @@ def get_pre_post_windows(
         point but should be tuned based on actual comment timestamp
         distributions — narrower windows (e.g. 6–12 h) may reduce noise for
         causal analysis.
+
+    .. note::
+        ``compute_sentiment_shift()`` in this same module solves a related
+        problem (comparing pre/post sentiment by match result) using
+        ``MATCH_PRE_WINDOW_HOURS`` / ``MATCH_POST_WINDOW_HOURS`` from config
+        instead of calling this function.
+
+        TODO: Consider unifying both time-window implementations so that
+        ``compute_sentiment_shift`` also uses ``get_pre_post_windows`` (or
+        vice versa), eliminating the duplicated window logic.
 
     Args:
         match_date: The match kickoff timestamp (UTC).
