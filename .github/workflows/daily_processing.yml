@@ -2,9 +2,8 @@ name: Daily Processing
 
 on:
   schedule:
-    # Run daily at 09:30 UTC — 90 min after collection starts (08:00 UTC),
-    # giving it time to finish even on slow days.
-    - cron: '30 9 * * *'
+    # Run weekly on Sundays at 09:30 UTC (post-tournament maintenance)
+    - cron: '30 9 * * 0'
   workflow_dispatch:
     # Allow manual trigger for testing
 
