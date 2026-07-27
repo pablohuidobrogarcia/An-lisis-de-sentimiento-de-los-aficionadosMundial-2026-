@@ -3,7 +3,7 @@ Mundial 2026 — Social Media Sentiment Dashboard
 
 Editorial-style dashboard with 5 sections:
 1. Hero KPIs
-2. Streamgraph (daily sentiment volume)
+2. Calendar (daily sentiment + coverage)
 3. Treemap (topics)
 4. Player Network
 5. Ridgeline (sentiment by phase)
@@ -13,6 +13,7 @@ Usage:
 """
 
 import json
+import math
 import sys
 import tempfile
 import unicodedata
@@ -249,7 +250,7 @@ def classify_phase(dt):
 t1, t2, t3, t4, t5 = st.tabs(
     [
         "Hero KPIs",
-        "Streamgraph",
+        "Calendario",
         "Treemap",
         "Red de Menciones",
         "Ridgeline",
@@ -317,20 +318,21 @@ with t1:
         )
 
 # ═════════════════════════════════════════════════════════════════════════════
-# TAB 2 — Streamgraph
+# TAB 2 — Calendar Heatmap
 # ═════════════════════════════════════════════════════════════════════════════
 
 with t2:
-    st.header("El Pulso del Torneo: Sentimiento Dia a Dia")
+    st.header("El Pulso del Torneo: Calendario de Sentimiento")
 
     if df_full.empty or "published_at" not in df_full.columns:
         st.warning("Datos insuficientes.")
     else:
-        daily = df_full.copy()
-        daily["date"] = pd.to_datetime(daily["published_at"], utc=True).dt.floor("D")
+        # ── Aggregate daily (respects sidebar filters: teams, lang, dates) ──
+        cal = df_full.copy()
+        cal["date"] = pd.to_datetime(cal["published_at"], utc=True).dt.floor("D")
 
-        daily_agg = (
-            daily.groupby("date")
+        daily = (
+            cal.groupby("date")
             .agg(
                 total=("comment_id", "count"),
                 pos=("sentiment_bert", lambda x: (x == "POS").sum()),
@@ -340,20 +342,141 @@ with t2:
             .reset_index()
         )
 
-        daily_agg["pos_pct"] = daily_agg["pos"] / daily_agg["total"]
-        daily_agg["neg_pct"] = daily_agg["neg"] / daily_agg["total"]
-        daily_agg["neu_pct"] = daily_agg["neu"] / daily_agg["total"]
+        daily["pos_pct"] = daily["pos"] / daily["total"] * 100
+        daily["neu_pct"] = daily["neu"] / daily["total"] * 100
+        daily["neg_pct"] = daily["neg"] / daily["total"] * 100
 
+        # Dynamic color range: percentiles 5 and 95 of observed %NEG
+        neg_pcts = daily["neg_pct"].sort_values()
+        n = len(neg_pcts)
+        cmin = neg_pcts.iloc[max(0, int(n * 0.05) - 1)]
+        cmax = neg_pcts.iloc[min(n - 1, int(n * 0.95) - 1)]
+        if cmax <= cmin:
+            cmin, cmax = daily["neg_pct"].min(), daily["neg_pct"].max()
+
+        # ── Match dates from JSON ───────────────────────────────────────────
+        matches_path = Path("data/raw/.checkpoints/_processed_matches.json")
+        match_info = {}  # {date: sorted_teams}
+        if matches_path.exists():
+            with open(matches_path, encoding="utf-8") as f:
+                raw_matches = json.load(f)
+            for key in raw_matches:
+                parts = key.split("_vs_", 1)
+                if len(parts) != 2:
+                    continue
+                team_a = parts[0].strip()
+                rest = parts[1]
+                idx = rest.find("_2026-")
+                if idx == -1:
+                    continue
+                team_b = rest[:idx].strip()
+                match_dt = pd.Timestamp(rest[idx + 1 :]).date()
+                if match_dt not in match_info:
+                    match_info[match_dt] = set()
+                match_info[match_dt].add(team_a)
+                match_info[match_dt].add(team_b)
+
+        # ── Marker sizing (log scale) ──────────────────────────────────────
+        log_vol = daily["total"].apply(math.log10)
+        min_log, max_log = log_vol.min(), log_vol.max()
+        if max_log > min_log:
+            sizes = 8 + 32 * (log_vol - min_log) / (max_log - min_log)
+        else:
+            sizes = 24
+
+        y_pos = [0] * len(daily)
+
+        # ── Tooltip ─────────────────────────────────────────────────────────
+        hover_texts = []
+        for _, r in daily.iterrows():
+            d = r["date"]
+            phase = classify_phase(d + pd.Timedelta(hours=12))
+            phase_str = f"<br><b>{phase}</b>" if phase else ""
+            match_str = ""
+            md = d.date()
+            if md in match_info:
+                teams = sorted(match_info[md])
+                match_str = f"<br>Partido: {' vs '.join(teams)}"
+            hover_texts.append(
+                f"<b>{d.strftime('%d %b %Y')}</b>{phase_str}{match_str}<br>"
+                f"n={r['total']:,}  POS={r['pos_pct']:.0f}%  "
+                f"NEU={r['neu_pct']:.0f}%  NEG={r['neg_pct']:.0f}%"
+            )
+
+        # ── Build figure ────────────────────────────────────────────────────
         fig = go.Figure()
 
-        # Phase backgrounds
-        phase_colors_bg = {
-            "Fase de Grupos": "rgba(52, 152, 219, 0.08)",
-            "Octavos": "rgba(155, 89, 182, 0.08)",
-            "Cuartos": "rgba(230, 126, 34, 0.08)",
-            "Semifinales": "rgba(26, 188, 156, 0.08)",
-            "3er Puesto": "rgba(241, 196, 15, 0.08)",
-            "Final": "rgba(231, 76, 60, 0.08)",
+        # Main bubbles: size = volume (log), color = % NEG
+        fig.add_trace(
+            go.Scatter(
+                x=daily["date"],
+                y=y_pos,
+                mode="markers",
+                name="Volumen de comentarios",
+                marker={
+                    "symbol": "square",
+                    "size": sizes.tolist() if isinstance(sizes, pd.Series) else sizes,
+                    "color": daily["neg_pct"],
+                    "colorscale": [[0, "#2ECC71"], [0.5, "#F4D03F"], [1, "#E74C3C"]],
+                    "showscale": True,
+                    "colorbar": {"title": "% NEG", "len": 0.6, "thickness": 12},
+                    "line": {"width": 1, "color": "rgba(255,255,255,0.4)"},
+                    "cmin": cmin,
+                    "cmax": cmax,
+                },
+                text=hover_texts,
+                hoverinfo="text",
+                hovertemplate="%{text}<extra></extra>",
+            )
+        )
+
+        # Match indicators (small triangles below cells)
+        if match_info:
+            match_x = [pd.Timestamp(d) for d in sorted(match_info)]
+            fig.add_trace(
+                go.Scatter(
+                    x=match_x,
+                    y=[-0.3] * len(match_x),
+                    mode="markers",
+                    marker={
+                        "symbol": "triangle-down",
+                        "size": 7,
+                        "color": "#F39C12",
+                        "line": {"width": 1, "color": "rgba(255,255,255,0.6)"},
+                    },
+                    name="Partido",
+                    hoverinfo="none",
+                    showlegend=True,
+                )
+            )
+
+        # Phase annotations along x-axis (reuses PHASES / classify_phase)
+        # Stagger y for consecutive narrow phases ("3er Puesto" / "Final") to
+        # avoid overlap — y=-0.55 (upper) vs y=-0.80 (lower).
+        phase_y = {"3er Puesto": -0.55, "Final": -0.80}
+        for name, start, end in PHASES:
+            s = pd.Timestamp(start)
+            e = pd.Timestamp(end)
+            pos = s + (e - s) / 2
+            y_annot = phase_y.get(name, -0.65)
+            fig.add_annotation(
+                x=pos,
+                y=y_annot,
+                xref="x",
+                yref="y",
+                text=f"<b>{name}</b>",
+                showarrow=False,
+                font={"size": 10, "color": "#aaaaaa"},
+            )
+
+        # Phase background bands
+        phase_bg_colors = {
+            "Fase de Grupos": "rgba(52, 152, 219, 0.06)",
+            "Octavos": "rgba(155, 89, 182, 0.06)",
+            "Cuartos": "rgba(230, 126, 34, 0.06)",
+            "Semifinales": "rgba(26, 188, 156, 0.06)",
+            "3er Puesto": "rgba(241, 196, 15, 0.06)",
+            "Final": "rgba(231, 76, 60, 0.06)",
         }
         for phase_name, start, end in PHASES:
             s = pd.Timestamp(start, tz="UTC")
@@ -361,91 +484,10 @@ with t2:
             fig.add_vrect(
                 x0=s,
                 x1=e,
-                fillcolor=phase_colors_bg.get(phase_name, "rgba(255,255,255,0.03)"),
+                fillcolor=phase_bg_colors.get(phase_name, "rgba(255,255,255,0.02)"),
                 layer="below",
                 line_width=0,
             )
-
-        # POS stream (bottom)
-        fig.add_trace(
-            go.Scatter(
-                x=daily_agg["date"],
-                y=daily_agg["pos_pct"],
-                mode="lines",
-                fill="tonexty",
-                name="POS",
-                line={"width": 0},
-                fillcolor=POS_COLOR,
-                stackgroup="one",
-                hovertemplate="%{x|%d %b}<br>POS: %{y:.1%}<extra></extra>",
-            )
-        )
-
-        # NEU stream (middle)
-        fig.add_trace(
-            go.Scatter(
-                x=daily_agg["date"],
-                y=daily_agg["neu_pct"],
-                mode="lines",
-                fill="tonexty",
-                name="NEU",
-                line={"width": 0},
-                fillcolor=NEU_COLOR,
-                stackgroup="one",
-                hovertemplate="%{x|%d %b}<br>NEU: %{y:.1%}<extra></extra>",
-            )
-        )
-
-        # NEG stream (top)
-        fig.add_trace(
-            go.Scatter(
-                x=daily_agg["date"],
-                y=daily_agg["neg_pct"],
-                mode="lines",
-                fill="tonexty",
-                name="NEG",
-                line={"width": 0},
-                fillcolor=NEG_COLOR,
-                stackgroup="one",
-                hovertemplate="%{x|%d %b}<br>NEG: %{y:.1%}<extra></extra>",
-            )
-        )
-
-        # Phase annotations
-        phase_annot_dates = {
-            "Fase de Grupos": "2026-06-23",
-            "Octavos": "2026-07-06",
-            "Cuartos": "2026-07-11",
-            "Semifinales": "2026-07-14",
-            "Final": "2026-07-19",
-        }
-        for phase_name, anno_date in phase_annot_dates.items():
-            fig.add_annotation(
-                x=pd.Timestamp(anno_date, tz="UTC"),
-                y=0.98,
-                yref="y",
-                text=f"<b>{phase_name}</b>",
-                showarrow=False,
-                font={"size": 11, "color": "#aaaaaa"},
-                yshift=10,
-            )
-
-        # Peak NEG annotation
-        peak_neg_row = daily_agg.loc[daily_agg["neg_pct"].idxmax()]
-        fig.add_annotation(
-            x=peak_neg_row["date"],
-            y=peak_neg_row["neg_pct"],
-            text=f"Pico NEG: {peak_neg_row['neg_pct']:.0%}",
-            showarrow=True,
-            arrowhead=2,
-            arrowsize=1,
-            ax=0,
-            ay=-40,
-            font={"size": 12, "color": NEG_COLOR},
-            bgcolor=DARK_BG,
-            bordercolor=NEG_COLOR,
-            borderwidth=1,
-        )
 
         fig.update_layout(
             template="plotly_dark",
@@ -453,25 +495,47 @@ with t2:
             plot_bgcolor=DARK_BG,
             font={"color": "#ffffff"},
             title={
-                "text": "El Pulso del Torneo: Sentimiento Dia a Dia",
+                "text": "El Pulso del Torneo: Calendario de Sentimiento",
                 "x": 0.5,
-                "font": {"size": 24},
+                "font": {"size": 24, "color": "#ffffff"},
             },
-            xaxis={"title": "", "showgrid": False, "zeroline": False},
-            yaxis={
-                "title": "Proporcion",
-                "showgrid": True,
-                "gridcolor": "#333333",
+            xaxis={
+                "title": "",
+                "showgrid": False,
                 "zeroline": False,
-                "tickformat": ".0%",
+                "dtick": 86400000 * 3,
+                "tickformat": "%d %b",
             },
-            hovermode="x unified",
-            legend={"orientation": "h", "y": 1.02, "x": 0.5, "xanchor": "center"},
-            margin={"l": 50, "r": 30, "t": 80, "b": 40},
-            height=500,
+            yaxis={
+                "title": "",
+                "showgrid": False,
+                "zeroline": False,
+                "visible": False,
+                "range": [-1, 1],
+            },
+            hovermode="closest",
+            showlegend=True,
+            legend={
+                "orientation": "h",
+                "y": -0.25,
+                "x": 0.5,
+                "xanchor": "center",
+                "font": {"size": 10},
+            },
+            margin={"l": 20, "r": 30, "t": 80, "b": 110},
+            height=400,
         )
 
         st.plotly_chart(fig, width="stretch")
+
+        # ── Methodological note ─────────────────────────────────────────────
+        st.caption(
+            "El tamano de cada celda refleja el volumen de comentarios (escala logaritmica). "
+            "El color indica el % de sentimiento negativo (verde=bajo, rojo=alto). "
+            "Dias con bajo volumen corresponden a periodos sin partido de las 5 selecciones "
+            "(pre-torneo, descansos entre rondas, post-torneo) — no a fallos de recoleccion. "
+            "Los triangulos amarillos marcan los dias con partido del torneo."
+        )
 
 # ═════════════════════════════════════════════════════════════════════════════
 # TAB 3 — Treemap
