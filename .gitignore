@@ -55,6 +55,13 @@ models/*
 *.log
 *.err
 logs/
+# Captured terminal/Streamlit output
+dashboard_errors.txt
+
+# ── Vendor / local assets ────────────────────────────────────────────────────
+# Third-party JS bundles (vis.js, tom-select) kept locally but not referenced
+# by the runtime (dashboard renders via pyvis bundled JS).
+lib/
 
 # ── IDE / OS ─────────────────────────────────────────────────────────────────
 .vscode/
