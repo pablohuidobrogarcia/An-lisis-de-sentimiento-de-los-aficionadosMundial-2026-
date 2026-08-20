@@ -55,11 +55,11 @@ graph TD
     L --> M[final dataset]
     M --> N[Dashboard Streamlit]
     N --> O{5 tabs}
-    O --> P[Resumen]
-    O --> Q[Temporal]
-    O --> R[Comparativa]
-    O --> S[Temas]
-    O --> T[Impacto]
+    O --> P[Hero KPIs]
+    O --> Q[Calendario]
+    O --> R[Treemap]
+    O --> S[Red de Menciones]
+    O --> T[Ridgeline]
 ```
 
 **Flujo de datos:**
@@ -82,6 +82,7 @@ graph TD
 | NLP | spaCy, pysentimiento, HuggingFace Transformers |
 | Sentimiento ES | pysentimiento (BERT fine-tuned español) |
 | Sentimiento EN | cardiffnlp/twitter-roberta-base-sentiment |
+| **Modelo de producción** | **cardiffnlp XLM-RoBERTa fine-tuned** (ES+EN, epoch 4, acc test 72.6%) |
 | Baseline EN | VADER |
 | Baseline ES | Léxico de polaridad (NRC-EmoLex ES) |
 | Topic Modeling | BERTopic + SentenceTransformers |
@@ -104,8 +105,8 @@ graph TD
 
 ```bash
 # 1. Clonar
-git clone https://github.com/tu-usuario/mundial2026-sentiment-analysis.git
-cd mundial2026-sentiment-analysis
+git clone https://github.com/pablohuidobrogarcia/An-lisis-de-sentimiento-de-los-aficionadosMundial-2026-.git
+cd An-lisis-de-sentimiento-de-los-aficionadosMundial-2026-
 
 # 1b. Git LFS (necesario para el modelo fine-tuned ~1 GB)
 #     Instalar desde https://git-lfs.com si no está disponible
@@ -400,48 +401,71 @@ mundial2026-sentiment-analysis/
 - **Deduplicación**: SHA-256 del texto limpio.
 
 ### 3. Análisis de sentimiento
-- **Modelo principal**: pysentimiento (ES) y cardiffnlp/twitter-roberta-base-sentiment (EN).
+- **Modelo principal**: cardiffnlp XLM-RoBERTa fine-tuned sobre etiquetas manuales (ES+EN), 72.6% de accuracy en test (n=500) y F1 macro 0.71. Sustituye a pysentimiento (ES) y twitter-roberta-base (EN) usados como partida.
 - **Baseline**: VADER (EN) y léxico de polaridad español (NRC-EmoLex).
-- **Evaluación**: Muestra etiquetada manualmente (~150 comentarios) con métricas de accuracy, F1 y matriz de confusión.
+- **Evaluación**: Etiquetado manual de comentarios y comparación de modelos (pysentimiento 0.42 acc sobre 150 muestras) con matriz de confusión y análisis de errores.
 
 ### 4. Topic Modeling y NER
-- **BERTopic** con embeddings multilingües para identificar temas recurrentes.
-- **NER** con spaCy + diccionario propio de jugadores, marcas y sedes del Mundial 2026.
+- **BERTopic** con embeddings multilingües para identificar temas recurrentes (20 temas tras consolidación manual e interpretación de outliers).
+- **NER** con spaCy + diccionario propio de jugadores, marcas y sedes del Mundial 2026 (24,794 comentarios con mención de jugadores detectada).
 
 ### 5. Integración con resultados
-- Partidos reales via football-data.org.
-- Ventanas de 24h pre/post partido.
-- Test de Mann-Whitney para significancia estadística del cambio de sentimiento.
+- Partidos reales via football-data.org (cache en `fixtures_cache.json`).
+- Ventanas pre/post partido y test de Mann-Whitney implementados en `results_api.py`, **pero retirados del dashboard final**: la cobertura temporal de comentarios no siempre cae en la ventana inmediata al partido, lo que hacía poco fiable la comparación causal.
 
 ---
 
 ## Resultados
 
-*Sección actualizada tras la ejecución del pipeline durante el Mundial 2026.*
+*Basado en el dataset final del torneo: **200,316 comentarios** únicos (144,910 EN / 55,406 ES) publicados entre el **11 de junio y el 23 de julio de 2026** en los canales FIFA, ESPN, FOX Soccer, TUDN y beIN SPORTS.*
 
 ### KPIs principales
 | Indicador | Valor |
 |-----------|-------|
-| Comentarios analizados | *(pendiente)* |
-| Sentimiento positivo global | *(pendiente)* |
-| Sentimiento negativo global | *(pendiente)* |
-| Temas identificados | *(pendiente)* |
-| Equipo con sentimiento más positivo | *(pendiente)* |
-| Cambios significativos detectados | *(pendiente)* |
+| Comentarios analizados | 200,316 |
+| Sentimiento positivo global | 28.2% |
+| Sentimiento negativo global | 46.3% |
+| Sentimiento neutro global | 25.5% |
+| Temas identificados (BERTopic consolidado) | 20 |
+| Equipo con sentimiento más positivo | Brasil (30.3% POS) |
+| Equipo con más negatividad | Argentina (50.5% NEG) |
+| Jugador más mencionado | Lionel Messi (13,004 menciones) |
+| Likes totales | 4,201,604 (~21 por comentario) |
+| Precisión del modelo de producción | 72.6% (test n=500) |
 
-### Hallazgos clave
-*Se completará tras la recolección y análisis de datos reales.*
+## Hallazgos clave
+
+1. **El torneo sesgó negativamente la conversación.** El NEG global (46.3%) supera ampliamente al POS (28.2%). La fase más negativa fueron los **octavos de final (52.1% NEG)** — con picos del 61.8% el 8 de julio — mientras que la fase de grupos fue la más positiva (32.3% POS).
+
+2. **El arbitraje fue el mayor generador de negatividad.** Los comentarios que mencionan arbitraje/VAR (8,971) alcanzan un **74% NEG**, frente al 46% global. El tópico *referee/rigged/VAR* reunió el 5.9% de toda la conversación, casi el triple de negatividad que la media.
+
+3. **Una sola narrativa dominó el torneo: Argentina y Messi.** El 66% de los comentarios cayó en el tópico *argentina/messi/team*. Messi fue mencionado 13,004 veces — 4× más que Mbappé (3,229) y 8× más que Kane (1,605). Las selecciones con superestrellas (Argentina, Francia, Inglaterra) concentran su sentimiento en la actuación individual.
+
+4. **La derrota en la final amplificó el descontento.** El 20 de julio — día posterior a la final — fue el pico absoluto de volumen (15,071 comentarios) con 58.8% NEG. El sentimiento por fase cayó de 32.3% POS en grupos a un rango de 45–52% NEG en eliminatorias.
+
+5. **Sentimiento por selección (ordenado por positividad):**
+
+| Selección | POS | NEG | NEU | Comentarios* |
+|-----------|-----|-----|-----|--------------|
+| Brasil | 30.3% | 40.7% | 29.0% | 32,853 |
+| Inglaterra | 28.5% | 45.5% | 26.0% | 52,200 |
+| Argentina | 27.8% | 50.5% | 21.8% | 88,515 |
+| Francia | 26.6% | 45.8% | 27.7% | 51,926 |
+| España | 26.3% | 49.5% | 24.2% | 58,748 |
+
+*\*Comentarios que mencionan al equipo (pueden contar en varias selecciones).*
 
 ---
 
 ## Limitaciones
 
 1. **Sesgo de plataforma**: YouTube no representa a la población global de aficionados al fútbol. Los comentarios provienen de usuarios que buscan activamente contenido sobre el Mundial, lo que puede sesgar hacia aficionados más comprometidos.
-2. **Cobertura lingüística**: Solo español e inglés. Quedan fuera conversaciones en portugués (Brasil), francés, alemán, árabe, etc.
-3. **Ironía y sarcasmo**: Los modelos BERT actuales tienen dificultades con el sarcasmo, lo que puede generar falsos positivos/negativos.
-4. **Datos sintéticos durante desarrollo**: Hasta que comience el Mundial (junio 2026), los datos de prueba son simulados o de ediciones anteriores.
-5. **Volumen limitado**: La API gratuita de football-data.org tiene límite de 10 requests/minuto.
-6. **Privacidad**: Solo se analizan comentarios públicos. No se almacenan nombres de usuario ni datos identificables.
+2. **Cobertura lingüística**: Solo español e inglés (72% EN / 28% ES). Quedan fuera conversaciones en portugués (Brasil), francés, alemán, árabe, etc.
+3. **Ironía y sarcasmo**: Los modelos BERT/XLM-RoBERTa tienen dificultades con el sarcasmo, lo que puede generar falsos positivos/negativos (el 7.1% de errores del modelo final corresponde a este tipo de casos).
+4. **Causalidad no demostrable**: El análisis pre/post partido se retiró del dashboard final por la falta de fiabilidad de las ventanas temporales; los hallazgos son correlacionales, no causales.
+5. **NER de marcas incompleto**: La detección de jugadores funcionó (24,794 comentarios), pero la de marcas patrocinadoras no produjo resultados en el dataset final.
+6. **Volumen limitado**: La API gratuita de football-data.org tiene límite de 10 requests/minuto.
+7. **Privacidad**: Solo se analizan comentarios públicos. No se almacenan nombres de usuario ni datos identificables.
 
 ---
 
@@ -449,8 +473,8 @@ mundial2026-sentiment-analysis/
 
 **Pablo Huidobro García** — Business Analytics | Data Science
 
-[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?logo=linkedin)](https://linkedin.com/in/tu-perfil)
-[![GitHub](https://img.shields.io/badge/GitHub-181717?logo=github)](https://github.com/tu-usuario)
+[![LinkedIn](https://img.shields.io/badge/LinkedIn-0077B5?logo=linkedin)](https://www.linkedin.com/in/tu-perfil)
+[![GitHub](https://img.shields.io/badge/GitHub-181717?logo=github)](https://github.com/pablohuidobrogarcia)
 
 ---
 

@@ -223,12 +223,15 @@ def run_pipeline(
         from src.topic_modeling import (
             add_entities_to_dataframe,
             add_topics_to_dataframe,
+            consolidate_topics,
         )
 
         logger.info("Step 4/5: Topic modeling …")
         df, _ = add_topics_to_dataframe(
             df, model_save_path=config.PROCESSED_DIR / "bertopic_model"
         )
+        logger.info("Step 4/5: Topic consolidation …")
+        df = consolidate_topics(df)
         logger.info("Step 4/5: NER …")
         df = add_entities_to_dataframe(df)
         save_dataframe(

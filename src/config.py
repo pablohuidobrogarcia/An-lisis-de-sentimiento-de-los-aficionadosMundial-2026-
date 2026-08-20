@@ -100,36 +100,31 @@ SPACY_MODELS: Dict[str, str] = {
 TOPIC_EMBEDDING_MODEL: str = "paraphrase-multilingual-MiniLM-L12-v2"
 TOPIC_MIN_TOPICS: int = 15
 TOPIC_MAX_TOPICS: int = 25
+TOPIC_REDUCE_OUTLIERS: bool = True
+TOPIC_REDUCE_STRATEGY: str = "c-tf-idf"
+TOPIC_REDUCE_THRESHOLD: float = 0.0
 
 # Manual overrides for interpretable topic labels (populate after inspecting
 # topic_model.get_topic_info() output from a real run).
 # Format: {"keyword1 / keyword2 / keyword3": "Custom Label"}
-TOPIC_LABEL_OVERRIDES: Dict[str, str] = {
-    # Curated after inspecting BERTopic output on full dataset (21k+ docs)
-    "que / world / brazil": "Brazil World Cup Discussion",
-    "br / href / el": "Comments with Links / Threads",
-    "game / penalty / el": "Match Analysis / Penalties",
-    "mexico / méxico / que": "Mexico Discussion",
-    "commentary / crying / comment": "Commentary / Crying Criticism",
-    "japan / japanese / netherlands": "Japan vs Netherlands Match",
-    "video / highlights / highlight": "Video / Highlights",
-    "years / 40 / old": "Age / Experience Discussion",
-    "goat / goat goat / goats": "GOAT Debate",
-    "iran / arabia / saudi": "Iran vs Saudi Arabia Match",
-    "match / best / far": "Best Match / Team Rankings",
-    "red / card / roja": "Red Cards / Fouls",
-    "cr7 / unc / g6c3c": "CR7 / Ronaldo Discussion",
-    "debate / aburrido / boring": "Boring Matches / Debate",
-    "speed / speed speed / tv": "Content Creators / Media",
-    "rice / beach / declan rice": "Declan Rice / Transfers",
-    "robi / br / br stay": "General Comments / Threads",
-    "height / average / cm": "Player Height / Physical Stats",
-    "india / indian / love india": "India / Fan Love",
-    "dormir / bed / asleep": "Boring / Sleepy Comments",
-    "southgate / pitch southgate / got finals": "Southgate / England Finals",
-    "blue lock / blue / lock": "Blue Lock / Anime Reference",
-    "deserves recognition / recognition / production quality": "Production Quality Praise",
-    "injured / injury / got injured": "Injuries / Injury Discussion",
+# NOTE: These are applied by name_topics_interpretably() during initial labeling,
+# BEFORE consolidate_topics() applies final labels by topic ID.
+TOPIC_LABEL_OVERRIDES: Dict[str, str] = {}
+
+# ── Topic consolidation rules (applied after BERTopic assigns topics) ────────
+# Topics to remove entirely from the dataset (spam, off-topic).
+TOPIC_EXCLUDE: set[int] = {11, 21}
+
+# Topic merges: {source_topic_id: target_topic_id}.
+# Source topics are reassigned to the target; target keeps its ID.
+TOPIC_MERGE: Dict[int, int] = {7: 1, 23: 1, 18: 24, 20: 24}
+
+# Final labels for topics after consolidation (by topic ID).
+# Overrides whatever BERTopic generated. Topics not listed keep their original label.
+TOPIC_FINAL_LABELS: Dict[int, str] = {
+    1: "Críticas / Reacciones Genéricas",
+    4: "Política / Identidad Nacional (heterogéneo)",
+    24: "Anime / Cultura Pop Asiática",
 }
 
 # ── Sentiment analysis ──────────────────────────────────────────────────────

@@ -6,82 +6,89 @@
 
 ## Resumen ejecutivo
 
-Este proyecto analiza **miles de comentarios en YouTube** durante el Mundial 2026 para medir cómo cambia la percepción del público hacia cada selección, y **qué factores explican esos cambios**. Los resultados permiten tomar decisiones informadas sobre comunicación de marca, gestión de crisis y estrategia de patrocinio.
+Este proyecto analizó **200,316 comentarios en YouTube** (144,910 en inglés, 55,406 en español) durante el Mundial 2026 (11 de junio – 23 de julio de 2026) para medir cómo cambia la percepción del público hacia cada selección y qué factores explican esos cambios. Los resultados permiten tomar decisiones informadas sobre comunicación de marca, gestión de crisis y estrategia de patrocinio.
+
+**Número clave**: el **46.3%** de toda la conversación fue negativa, frente a solo un **28.2%** positiva. El Mundial 2026, visto desde YouTube, fue un torneo emocionalmente polarizado y con sesgo negativo persistente.
 
 ---
 
 ## Hallazgos principales
 
-*(Los valores numéricos se completarán tras la ejecución del pipeline con datos reales.)*
+### 1. El arbitraje fue el mayor generador de crisis de reputación
 
-### 1. El sentimiento hacia una selección es un indicador adelantado de crisis de reputación
+Los comentarios que mencionan **arbitraje, VAR o "rigged"** (8,971 comentarios) alcanzan un **74% de negatividad**, frente al 46% medio. El tópico *referee / rigged / VAR* reunió el **5.9%** de toda la conversación — casi el triple de negatividad que la media del torneo.
 
-Cuando el sentimiento negativo hacia una selección supera el **X%** del volumen total de conversación, suele ir seguido de un aumento de X% en menciones negativas a patrocinadores asociados.
+**Implicación para marcas**: Cualquier partido con polémica arbitral dispara el sentimiento negativo de forma inmediata e independiente del resultado. Evitar activar campañas de marca en esos días: el mensaje será invisible o asociado negativamente.
 
-**Implicación para marcas**: Monitorizar el sentimiento por selección permite activar protocolos de comunicación antes de que una crisis se amplifique.
+### 2. Las victorias no siempre mejoran el sentimiento... pero la eliminación y la derrota en la final sí lo empeoran
 
-### 2. Las victorias no siempre mejoran el sentimiento... pero las derrotas siempre lo empeoran
+El sentimiento cayó de forma constante según avanzaba el torneo:
 
-| Resultado | Cambio en sentimiento positivo | Cambio en sentimiento negativo |
-|-----------|-------------------------------|-------------------------------|
-| Victoria | +X% (si el equipo era favorito) / -X% (si el juego fue pobre) | -X% |
-| Derrota | -X% | +X% |
-| Polémica arbitral | -X% (afecta a ambos equipos) | +X% |
+| Fase | Sentimiento positivo | Sentimiento negativo |
+|------|---------------------|---------------------|
+| Fase de grupos | **32.3%** (pico de optimismo) | 39.3% |
+| Octavos de final | 25.3% | **52.1%** (el peor momento) |
+| Cuartos de final | 22.8% | 48.8% |
+| Semifinales | 27.4% | 45.5% |
+| 3er puesto | 26.2% | 47.3% |
+| Final | 29.6% | 49.5% |
 
-**Implicación**: Una victoria ajustada o poco convincente puede no traducirse en mejora de percepción. Las marcas deberían evitar campañas triunfalistas inmediatas tras victorias ajustadas.
+**Implicación**: La fase de grupos fue el momento de mayor expectación positiva. En eliminatorias la conversación se vuelve negativa de forma estructural. Las marcas deberían concentrar su inversión publicitaria optimista en la fase de grupos y pasar a tono de gestión/escucha en octavos.
 
-### 3. Los temas que más impacto tienen en el sentimiento
+### 3. El tema que más impacta en el sentimiento: la actuación de las superestrellas
 
-Basado en el modelado de temas (BERTopic), los siguientes tópicos explican la mayor parte de la variación en sentimiento:
+Una única narrativa dominó todo el torneo: **Argentina y Messi**. El 66% de los comentarios cayó en el tópico *argentina / messi / team*. Los jugadores más mencionados:
 
-| Tema | Impacto en sentimiento | Volumen de conversación |
-|------|----------------------|----------------------|
-| Rendimiento del equipo | Alto | Muy alto |
-| Actuación arbitral | Muy alto | Alto |
-| Lesiones de jugadores clave | Alto | Medio |
-| Actuación individual (MVP) | Medio | Alto |
-| Decisiones del entrenador | Medio | Medio |
-| Marcas patrocinadoras | Bajo | Bajo |
+| Jugador | Menciones |
+|---------|-----------|
+| Lionel Messi | 13,004 |
+| Kylian Mbappé | 3,229 |
+| Harry Kane | 1,605 |
+| Lamine Yamal | 1,484 |
+| Neymar | 1,318 |
+| Jude Bellingham | 779 |
 
-**Implicación**: Si un partido termina con polémica arbitral, el sentimiento negativo se dispara independientemente del resultado. Las marcas deberían evitar asociarse a narrativas arbitrales.
+Messi concentró **4× más menciones** que Mbappé y **8× más** que Kane. En las selecciones con superestrellas (Argentina, Francia, Inglaterra), el sentimiento depende de la actuación individual más que del rendimiento colectivo.
 
-### 4. Ventana de oportunidad: 24 horas después del partido
+**Implicación**: En mercados como Argentina, las campañas deben girar en torno a figuras individuales, no al equipo como colectivo. Para España, la ausencia de una estrella dominante (Yamal es lo más cercano) implica un sentimiento más plano y menos volátil.
 
-El pico de volumen de conversación ocurre en las **primeras 6-8 horas** tras el partido. El sentimiento en esta ventana es **X% más extremo** que la media.
+### 4. Ventana de oportunidad: el pico de conversación tras la final
 
-**Implicación**: Las marcas tienen una ventana de ~24h para posicionarse en la conversación. Pasado ese tiempo, el sentimiento se normaliza y la atención del público se desplaza.
+El día posterior a la final (20 de julio) fue el pico absoluto de volumen con **15,071 comentarios** y un **58.8% de negatividad**. El 8 de julio alcanzó el máximo de negatividad diaria (61.8%).
+
+**Implicación**: Los momentos de máximo volumen son también los de máxima negatividad. No es buen momento para mensajes institucionales; sí para escucha activa y monitorización en tiempo real.
 
 ### 5. Comparativa entre selecciones
 
-| Selección | Sentimiento positivo medio | Volatilidad | Tema más mencionado |
-|-----------|--------------------------|-------------|-------------------|
-| España | X% | Alta | Rendimiento |
-| Argentina | X% | Muy alta | Messi |
-| Brasil | X% | Alta | Neymar / Vinícius |
-| Francia | X% | Media | Mbappé |
-| Inglaterra | X% | Media | Kane / Bellingham |
+| Selección | POS | NEG | NEU | Volatilidad | Tema dominante |
+|-----------|-----|-----|-----|-------------|----------------|
+| Brasil | 30.3% | 40.7% | 29.0% | Media | Neymar / Vinícius |
+| Inglaterra | 28.5% | 45.5% | 26.0% | Media | Kane / Bellingham |
+| Argentina | 27.8% | 50.5% | 21.8% | Muy alta | Messi |
+| Francia | 26.6% | 45.8% | 27.7% | Alta | Mbappé |
+| España | 26.3% | 49.5% | 24.2% | Media | Lamine Yamal |
 
-**Implicación**: Las selecciones con jugadores superestrella (Argentina, Brasil) tienen una volatilidad mayor porque el sentimiento depende más de la actuación individual que del rendimiento colectivo.
+**Implicación**: **Brasil** fue la selección mejor percibida (30.3% POS) y **Argentina** la peor percibida en términos de negatividad (50.5% NEG), pese a dominar la conversación. Las marcas asociadas a Brasil disfrutaron del mejor contexto reputacional del torneo.
 
 ---
 
 ## Recomendaciones para marcas patrocinadoras
 
-1. **Activar campañas en la ventana post-partido**: Concentrar inversión publicitaria en las 24h posteriores a los partidos de las selecciones patrocinadas.
-2. **Evitar días de alta polémica arbitral**: Si el tema dominante es el arbitraje, cualquier mensaje de marca será invisible o asociado negativamente.
-3. **Personalizar por mercado**: En Argentina y Brasil, el sentimiento está muy vinculado a jugadores individuales. Las campañas deberían centrarse en estrellas, no en el equipo.
-4. **Medir antes de actuar**: No lanzar campañas correctivas sin verificar que el cambio de sentimiento es estadísticamente significativo (p < 0.05 en la prueba de Mann-Whitney).
+1. **Activar campañas optimistas en la fase de grupos**: es el único período con sentimiento positivo superior al 30%.
+2. **Evitar días de alta polémica arbitral**: un partido con controversia de VAR genera hasta 74% de mensajes negativos que se engullen cualquier mensaje de marca.
+3. **Personalizar por mercado**: en Argentina y Francia el sentimiento se ancla a estrellas individuales (Messi, Mbappé); en España y Brasil, al equipo.
+4. **Medir antes de actuar**: los cambios de sentimiento deben monitorizarse por fase y tema, no solo por resultado, porque victorias y derrotas explican solo parte de la variación.
 
 ---
 
 ## Metodología
 
 - **Fuente**: YouTube (canales FIFA, ESPN, FOX Soccer, TUDN, beIN SPORTS).
-- **Idiomas**: Español e inglés.
-- **Modelo de sentimiento**: pysentimiento (BERT español) + RoBERTa (inglés), con baseline VADER/léxico para comparación.
-- **Topic modeling**: BERTopic con embeddings multilingües.
-- **Análisis causal**: Comparación de sentimiento en ventanas de 24h antes/después de cada partido, con test de Mann-Whitney.
-- **Período**: Mundial 2026 (fase de grupos en adelante).
+- **Idiomas**: Español e inglés (72% EN / 28% ES).
+- **Modelo de sentimiento**: cardiffnlp XLM-RoBERTa fine-tuned sobre etiquetas manuales, con **72.6% de accuracy en test** (F1 macro 0.71). Se partió de pysentimiento (ES) y RoBERTa (EN).
+- **Topic modeling**: BERTopic con embeddings multilingües (20 temas tras consolidación e interpretación de outliers).
+- **NER**: spaCy + diccionario propio de jugadores del Mundial 2026 (24,794 comentarios con menciones de jugadores).
+- **Período**: 11 de junio – 23 de julio de 2026 (grupos, eliminatorias y final).
 
 ---
 
@@ -90,9 +97,10 @@ El pico de volumen de conversación ocurre en las **primeras 6-8 horas** tras el
 - Los datos provienen exclusivamente de YouTube, que tiene un sesgo hacia usuarios que buscan activamente contenido deportivo.
 - Solo se analizan comentarios en español e inglés.
 - El modelo puede fallar en casos de sarcasmo o ironía compleja.
-- Las correlaciones observadas no implican causalidad sin el test estadístico correspondiente.
+- Los hallazgos son **correlacionales**, no causales: el análisis pre/post partido se retiró del dashboard final por la falta de fiabilidad de las ventanas temporales.
+- La detección de marcas patrocinadoras (NER de brands) no produjo resultados: las conclusiones de marca se infieren de los temas, no de menciones explícitas.
 
 ---
 
 *Documento generado como parte del proyecto portfolio de Pablo Huidobro García.*
-*Última actualización: junio 2026.*
+*Última actualización: agosto 2026.*

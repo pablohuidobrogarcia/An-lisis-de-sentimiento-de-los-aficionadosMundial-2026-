@@ -15,8 +15,10 @@ Overview
   match dates.
 """
 
+import re
+import unicodedata
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any
 
 import pandas as pd
 from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, CountVectorizer
@@ -24,9 +26,15 @@ from sklearn.feature_extraction.text import ENGLISH_STOP_WORDS, CountVectorizer
 from src.config import (
     SPACY_MODELS,
     TOPIC_EMBEDDING_MODEL,
+    TOPIC_EXCLUDE,
+    TOPIC_FINAL_LABELS,
     TOPIC_LABEL_OVERRIDES,
     TOPIC_MAX_TOPICS,
+    TOPIC_MERGE,
     TOPIC_MIN_TOPICS,
+    TOPIC_REDUCE_OUTLIERS,
+    TOPIC_REDUCE_STRATEGY,
+    TOPIC_REDUCE_THRESHOLD,
 )
 from src.utils import setup_logger
 
@@ -130,84 +138,163 @@ _SPANISH_STOP_WORDS: set = {
 
 # ── Lazy-loaded singletons ──────────────────────────────────────────────────
 _BERTOPIC_MODEL = None
-_NLP_PIPELINES: Dict[str, Any] = {}
+_NLP_PIPELINES: dict[str, Any] = {}
 
 # ── World Cup 2026 known entities ───────────────────────────────────────────
-# Organised by team for easy extension.
-KNOWN_PLAYERS: Dict[str, List[str]] = {
-    "Spain": [
-        "Pedri",
-        "Gavi",
-        "Lamine Yamal",
-        "Nico Williams",
-        "Rodri",
-        "Unai Simón",
-        "Dani Carvajal",
-        "Aymeric Laporte",
-        "Álvaro Morata",
-        "Fermín López",
-        "Mikel Merino",
-        "Dani Olmo",
+# Key: canonical player name.  Value: list of known variants (lowercase).
+# Duplicating with/without accent is unnecessary — _ALL_KNOWN_ENTITIES
+# auto-generates accent‑free variants at build time via _strip_accents().
+
+KNOWN_PLAYERS: dict[str, list[str]] = {
+    # ── ESPAÑA (Luis de la Fuente) ──────────────────────────────────────────
+    "Unai Simón": ["unai simón", "unai simon", "unai", "simón", "simon"],
+    "David Raya": ["david raya", "raya"],
+    "Joan García": ["joan garcía", "joan garcia"],
+    "Marc Cucurella": ["marc cucurella", "cucurella"],
+    "Alejandro Grimaldo": [
+        "alejandro grimaldo",
+        "álex grimaldo",
+        "alex grimaldo",
+        "grimaldo",
     ],
-    "Argentina": [
-        "Lionel Messi",
-        "Ángel Di María",
-        "Julián Álvarez",
-        "Enzo Fernández",
-        "Alexis Mac Allister",
-        "Lautaro Martínez",
-        "Emiliano Martínez",
-        "Nicolás Otamendi",
-        "Cristian Romero",
-        "Rodrigo De Paul",
-        "Leandro Paredes",
-        "Nahuel Molina",
+    "Pau Cubarsí": ["pau cubarsí", "pau cubarsi", "cubarsí", "cubarsi"],
+    "Aymeric Laporte": ["aymeric laporte", "laporte"],
+    "Marc Pubill": ["marc pubill", "pubill"],
+    "Eric García": ["eric garcía", "eric garcia"],
+    "Marcos Llorente": ["marcos llorente", "llorente"],
+    "Pedro Porro": ["pedro porro", "porro"],
+    "Pablo Gavi": ["pablo gavi", "gavi"],
+    "Pedri González": ["pedri gonzález", "pedri gonzalez", "pedri"],
+    "Fabián Ruiz": ["fabián ruiz", "fabian ruiz", "fabián"],
+    "Martín Zubimendi": ["martín zubimendi", "zubimendi"],
+    "Rodri Hernández": [
+        "rodri hernández",
+        "rodrigo hernández",
+        "rodri hernandez",
+        "rodrigo hernandez",
+        "rodri",
     ],
-    "Brazil": [
-        "Neymar",
-        "Vinícius Jr",
-        "Rodrygo",
-        "Endrick",
-        "Raphinha",
-        "Casemiro",
-        "Marquinhos",
-        "Alisson",
-        "Gabriel Martinelli",
-        "Bruno Guimarães",
-        "João Pedro",
-        "Lucas Paquetá",
-    ],
-    "France": [
-        "Kylian Mbappé",
-        "Antoine Griezmann",
-        "Eduardo Camavinga",
-        "Aurélien Tchouaméni",
-        "Mike Maignan",
-        "Dayot Upamecano",
-        "Ousmane Dembélé",
-        "Randal Kolo Muani",
-        "Olivier Giroud",
-        "Theo Hernández",
-        "Jules Koundé",
-        "Adrien Rabiot",
-    ],
-    "England": [
-        "Harry Kane",
-        "Jude Bellingham",
-        "Bukayo Saka",
-        "Declan Rice",
-        "Phil Foden",
-        "Mason Mount",
-        "Jack Grealish",
-        "Marcus Rashford",
-        "Jordan Pickford",
-        "Kyle Walker",
-        "John Stones",
-        "Cole Palmer",
-    ],
+    "Álex Baena": ["álex baena", "alex baena", "baena"],
+    "Mikel Merino": ["mikel merino", "merino"],
+    "Lamine Yamal": ["lamine yamal", "lamine", "yamal"],
+    "Nico Williams": ["nico williams", "williams"],
+    "Yéremy Pino": ["yéremy pino", "yeremy pino", "pino"],
+    "Ferran Torres": ["ferran torres", "ferran"],
+    "Álvaro Morata": ["álvaro morata", "alvaro morata", "morata"],
+    "Dani Olmo": ["dani olmo", "olmo"],
+    "Mikel Oyarzabal": ["mikel oyarzabal", "oyarzabal"],
+    "Víctor Muñoz": ["víctor muñoz", "victor munoz"],
+    # ── ARGENTINA (Lionel Scaloni) ──────────────────────────────────────────
+    "Emiliano Martínez": ["emiliano martínez", "emiliano martinez"],
+    "Gerónimo Rulli": ["gerónimo rulli", "geronimo rulli", "rulli"],
+    "Juan Musso": ["juan musso", "musso"],
+    "Gonzalo Montiel": ["gonzalo montiel", "montiel"],
+    "Nahuel Molina": ["nahuel molina", "molina"],
+    "Lisandro Martínez": ["lisandro martínez", "lisandro martinez"],
+    "Nicolás Otamendi": ["nicolás otamendi", "otamendi"],
+    "Leonardo Balerdi": ["leonardo balerdi", "balerdi"],
+    "Cristian Romero": ["cristian romero", "romero"],
+    "Nicolás Tagliafico": ["nicolás tagliafico", "tagliafico"],
+    "Facundo Medina": ["facundo medina", "medina"],
+    "Giovani Lo Celso": ["giovani lo celso", "lo celso"],
+    "Leandro Paredes": ["leandro paredes", "paredes"],
+    "Rodrigo De Paul": ["rodrigo de paul", "de paul"],
+    "Exequiel Palacios": ["exequiel palacios", "palacios"],
+    "Enzo Fernández": ["enzo fernández", "enzo fernandez"],
+    "Alexis Mac Allister": ["alexis mac allister", "mac allister"],
+    "Valentín Barco": ["valentín barco", "valentin barco"],
+    "Lionel Messi": ["lionel messi", "messi"],
+    "Nicolás González": ["nicolás gonzález", "nico gonzález", "nico gonzalez"],
+    "Giuliano Simeone": ["giuliano simeone", "simeone"],
+    "Lautaro Martínez": ["lautaro martínez", "lautaro"],
+    "José Manuel López": ["josé manuel lópez", "jose lopez"],
+    "Julián Álvarez": ["julián álvarez", "julian alvarez", "álvarez"],
+    "Thiago Almada": ["thiago almada", "almada"],
+    "Nico Paz": ["nico paz", "paz"],
+    # ── BRASIL (Carlo Ancelotti) ────────────────────────────────────────────
+    "Alisson Becker": ["alisson becker", "alisson"],
+    "Ederson": ["ederson"],
+    "Weverton": ["weverton"],
+    "Marquinhos": ["marquinhos"],
+    "Gabriel Magalhães": ["gabriel magalhães", "gabriel magalhaes"],
+    "Bremer": ["bremer"],
+    "Danilo": ["danilo"],
+    "Alex Sandro": ["alex sandro"],
+    "Léo Pereira": ["léo pereira", "leo pereira"],
+    "Douglas Santos": ["douglas santos"],
+    "Wesley": ["wesley"],
+    "Ibañez": ["ibañez", "ibanez"],
+    "Casemiro": ["casemiro"],
+    "Bruno Guimarães": ["bruno guimarães", "bruno guimaraes"],
+    "Lucas Paquetá": ["lucas paquetá", "lucas paqueta", "paquetá", "paqueta"],
+    "Fabinho": ["fabinho"],
+    "Danilo Santos": ["danilo santos"],
+    "Vinícius Júnior": ["vinícius júnior", "vinicius junior", "vinícius"],
+    "Raphinha": ["raphinha"],
+    "Matheus Cunha": ["matheus cunha"],
+    "Neymar": ["neymar"],
+    "Endrick": ["endrick"],
+    "Gabriel Martinelli": ["gabriel martinelli", "martinelli"],
+    "Igor Thiago": ["igor thiago"],
+    "Luiz Henrique": ["luiz henrique"],
+    "Rayan": ["rayan"],
+    # ── FRANCIA (Didier Deschamps) ──────────────────────────────────────────
+    "Mike Maignan": ["mike maignan", "maignan"],
+    "Brice Samba": ["brice samba", "samba"],
+    "Robin Risser": ["robin risser", "risser"],
+    "Jules Koundé": ["jules koundé", "jules kounde", "koundé", "kounde"],
+    "Malo Gusto": ["malo gusto", "gusto"],
+    "William Saliba": ["william saliba", "saliba"],
+    "Dayot Upamecano": ["dayot upamecano", "upamecano"],
+    "Ibrahima Konaté": ["ibrahima konaté", "ibrahima konate", "konaté", "konate"],
+    "Lucas Hernández": ["lucas hernández", "lucas hernandez"],
+    "Théo Hernández": ["théo hernández", "theo hernandez"],
+    "Lucas Digne": ["lucas digne", "digne"],
+    "Maxence Lacroix": ["maxence lacroix", "lacroix"],
+    "Aurélien Tchouaméni": ["aurélien tchouaméni", "tchouameni"],
+    "Adrien Rabiot": ["adrien rabiot", "rabiot"],
+    "N'Golo Kanté": ["n'golo kanté", "ngolo kante", "kanté", "kante"],
+    "Warren Zaïre-Emery": ["warren zaïre-emery", "zaire-emery"],
+    "Manu Koné": ["manu koné", "manu kone"],
+    "Kylian Mbappé": ["kylian mbappé", "kylian mbappe", "mbappé", "mbappe"],
+    "Michael Olise": ["michael olise", "olise"],
+    "Ousmane Dembélé": ["ousmane dembélé", "ousmane dembele", "dembélé"],
+    "Désiré Doué": ["désiré doué", "desire doue"],
+    "Bradley Barcola": ["bradley barcola", "barcola"],
+    "Marcus Thuram": ["marcus thuram", "thuram"],
+    "Maghnes Akliouche": ["maghnes akliouche", "akliouche"],
+    "Jean-Philippe Mateta": ["jean-philippe mateta", "mateta"],
+    "Rayan Cherki": ["rayan cherki", "cherki"],
+    # ── INGLATERRA (Thomas Tuchel) ───────────────────────────────────────────
+    "Jordan Pickford": ["jordan pickford", "pickford"],
+    "James Trafford": ["james trafford", "trafford"],
+    "Dean Henderson": ["dean henderson"],
+    "Dan Burn": ["dan burn", "burn"],
+    "Marc Guéhi": ["marc guéhi", "marc guehi", "guéhi", "guehi"],
+    "Reece James": ["reece james"],
+    "Ezri Konsa": ["ezri konsa", "konsa"],
+    "Tino Livramento": ["tino livramento", "livramento"],
+    "Nico O'Reilly": ["nico o'reilly", "nico oreilly"],
+    "Jarell Quansah": ["jarell quansah", "quansah"],
+    "Djed Spence": ["djed spence", "spence"],
+    "John Stones": ["john stones", "stones"],
+    "Elliott Anderson": ["elliott anderson"],
+    "Jude Bellingham": ["jude bellingham", "bellingham"],
+    "Eberechi Eze": ["eberechi eze", "eze"],
+    "Jordan Henderson": ["jordan henderson"],
+    "Kobbie Mainoo": ["kobbie mainoo", "mainoo"],
+    "Declan Rice": ["declan rice"],
+    "Morgan Rogers": ["morgan rogers"],
+    "Anthony Gordon": ["anthony gordon", "gordon"],
+    "Harry Kane": ["harry kane", "kane"],
+    "Noni Madueke": ["noni madueke", "madueke"],
+    "Marcus Rashford": ["marcus rashford", "rashford"],
+    "Bukayo Saka": ["bukayo saka", "saka"],
+    "Ivan Toney": ["ivan toney", "toney"],
+    "Ollie Watkins": ["ollie watkins", "watkins"],
 }
 
-KNOWN_BRANDS: List[str] = [
+KNOWN_BRANDS: list[str] = [
     "Coca-Cola",
     "McDonald's",
     "Adidas",
@@ -226,7 +313,7 @@ KNOWN_BRANDS: List[str] = [
     "Mountain Dew",
 ]
 
-KNOWN_VENUES: List[str] = [
+KNOWN_VENUES: list[str] = [
     "MetLife Stadium",
     "AT&T Stadium",
     "SoFi Stadium",
@@ -245,15 +332,36 @@ KNOWN_VENUES: List[str] = [
     "BMO Field",
 ]
 
-_ALL_KNOWN_ENTITIES: List[str] = (
-    KNOWN_PLAYERS["Spain"]
-    + KNOWN_PLAYERS["Argentina"]
-    + KNOWN_PLAYERS["Brazil"]
-    + KNOWN_PLAYERS["France"]
-    + KNOWN_PLAYERS["England"]
-    + KNOWN_BRANDS
-    + KNOWN_VENUES
-)
+
+def _strip_accents(text: str) -> str:
+    """Remove combining diacritics (accents, tildes, cedillas, etc.)."""
+    return "".join(
+        c for c in unicodedata.normalize("NFKD", text) if not unicodedata.combining(c)
+    )
+
+
+# _ALL_KNOWN_ENTITIES is a list of (alias_stripped, canonical_name, entity_type)
+# sorted by alias length descending so that longer (more specific) aliases
+# are matched first.  Accent‑free variants are auto‑generated.
+_ALL_KNOWN_ENTITIES: list[tuple[str, str, str]] = []
+
+for canonical, aliases in KNOWN_PLAYERS.items():
+    seen: set = set()
+    for alias in aliases:
+        flat = _strip_accents(alias.lower())
+        if flat not in seen:
+            seen.add(flat)
+            _ALL_KNOWN_ENTITIES.append((flat, canonical, "PLAYER"))
+
+for brand in KNOWN_BRANDS:
+    flat = _strip_accents(brand.lower())
+    _ALL_KNOWN_ENTITIES.append((flat, brand, "BRAND"))
+
+for venue in KNOWN_VENUES:
+    flat = _strip_accents(venue.lower())
+    _ALL_KNOWN_ENTITIES.append((flat, venue, "VENUE"))
+
+_ALL_KNOWN_ENTITIES.sort(key=lambda x: len(x[0]), reverse=True)
 
 
 def _get_spacy(language: str):
@@ -312,7 +420,7 @@ def _get_bertopic():
 def name_topics_interpretably(
     topic_model,
     topic_info: pd.DataFrame,
-) -> Dict[int, str]:
+) -> dict[int, str]:
     """Generate human-readable labels for each topic.
 
     Hybrid strategy:
@@ -326,7 +434,7 @@ def name_topics_interpretably(
     Returns:
         Dict mapping topic ID to human-readable label.
     """
-    labels: Dict[int, str] = {}
+    labels: dict[int, str] = {}
 
     for _, row in topic_info.iterrows():
         tid = int(row["Topic"])
@@ -350,9 +458,9 @@ def name_topics_interpretably(
 
 
 def build_topic_model(
-    docs: List[str],
+    docs: list[str],
     language: str = "multilingual",
-    save_path: Optional[Path] = None,
+    save_path: Path | None = None,
 ):
     """Configure, fit, and return a BERTopic model on *docs*.
 
@@ -380,7 +488,7 @@ def build_topic_model(
 
 def topics_over_time_df(
     model,
-    docs: List[str],
+    docs: list[str],
     timestamps: pd.Series,
     nr_bins: int = 20,
     global_tuning: bool = False,
@@ -415,7 +523,7 @@ def topics_over_time_df(
         DataFrame of topic prevalence over time, or empty if calculation fails.
     """
     try:
-        kwargs: Dict[str, Any] = {
+        kwargs: dict[str, Any] = {
             "global_tuning": global_tuning,
             "evolution_tuning": evolution_tuning,
         }
@@ -436,8 +544,12 @@ def extract_entities(
     text: str,
     language: str,
     use_custom_dict: bool = True,
-) -> Dict[str, List[Dict[str, Any]]]:
+) -> dict[str, list[dict[str, Any]]]:
     """Extract named entities from ``text`` using spaCy + custom dictionary.
+
+    The custom‑dictionary pass uses ``\\b`` word‑boundary regex, accent‑free
+    normalisation, and length‑descending alias priority to minimise false
+    positives.  Each canonical player is recorded at most once per call.
 
     Args:
         text: Input text (should be preprocessed).
@@ -448,8 +560,12 @@ def extract_entities(
     Returns:
         Dict with ``"spacy"`` and ``"custom"`` keys, each containing a list
         of ``{"text": ..., "label": ..., "start": ..., "end": ...}``.
+
+        Each **custom** entry now also includes a ``"matched_alias"`` key
+        (the specific alias variant that fired the match) for downstream
+        auditing.  The ``"text"`` field is always the **canonical** name.
     """
-    result: Dict[str, List[Dict[str, Any]]] = {"spacy": [], "custom": []}
+    result: dict[str, list[dict[str, Any]]] = {"spacy": [], "custom": []}
 
     nlp = _get_spacy(language)
     if nlp is not None:
@@ -466,18 +582,39 @@ def extract_entities(
                 )
 
     if use_custom_dict:
-        text_lower = text.lower()
-        for entity in _ALL_KNOWN_ENTITIES:
-            if entity.lower() in text_lower:
-                idx = text_lower.index(entity.lower())
+        text_flat = _strip_accents(text.lower())
+        matched_canonicals: set = set()
+        occupied_spans: list = []  # (start, end) of already-matched spans
+
+        for alias_flat, canonical, etype in _ALL_KNOWN_ENTITIES:
+            if canonical in matched_canonicals:
+                continue
+
+            pattern = r"\b" + re.escape(alias_flat) + r"\b"
+            for m in re.finditer(pattern, text_flat):
+                span_start = m.start()
+                span_end = m.end()
+
+                # Skip if this span is fully inside an already-occupied span
+                # (avoids contaminating e.g. "Danilo" inside "Danilo Santos")
+                is_inside = any(
+                    s <= span_start and span_end <= e for s, e in occupied_spans
+                )
+                if is_inside:
+                    continue
+
+                matched_canonicals.add(canonical)
+                occupied_spans.append((span_start, span_end))
                 result["custom"].append(
                     {
-                        "text": entity,
+                        "text": canonical,
+                        "matched_alias": alias_flat,
                         "label": "KNOWN_ENTITY",
-                        "start": idx,
-                        "end": idx + len(entity),
+                        "start": span_start,
+                        "end": span_end,
                     }
                 )
+                break  # only the first non-overlapping occurrence
 
     return result
 
@@ -506,11 +643,11 @@ def add_entities_to_dataframe(
     if df.empty:
         return df
 
-    players_found: List[str] = []
-    brands_found: List[str] = []
+    players_found: list[str] = []
+    brands_found: list[str] = []
 
-    all_spacy: List[List[str]] = []
-    all_custom: List[List[str]] = []
+    all_spacy: list[list[str]] = []
+    all_custom: list[list[str]] = []
 
     for _, row in df.iterrows():
         text = str(row.get(text_column, ""))
@@ -550,8 +687,8 @@ def add_entities_to_dataframe(
 
 
 def fit_topic_model(
-    texts: List[str],
-    save_path: Optional[Path] = None,
+    texts: list[str],
+    save_path: Path | None = None,
     **fit_kwargs: Any,
 ):
     """Fit BERTopic on a corpus of texts.
@@ -566,7 +703,7 @@ def fit_topic_model(
     """
     model = _get_bertopic()
     logger.info("Fitting BERTopic on %d documents …", len(texts))
-    topics, probs = model.fit_transform(texts, **fit_kwargs)
+    topics, _probs = model.fit_transform(texts, **fit_kwargs)
     logger.info(
         "BERTopic fitted: %d topics found", len(set(topics)) - 1
     )  # -1 for outliers
@@ -590,8 +727,8 @@ def get_topic_info(model) -> pd.DataFrame:
 
 def topics_over_time(
     model,
-    texts: List[str],
-    timestamps: List[pd.Timestamp],
+    texts: list[str],
+    timestamps: list[pd.Timestamp],
     nr_bins: int = 20,
     global_tuning: bool = False,
     evolution_tuning: bool = False,
@@ -628,8 +765,8 @@ def add_topics_to_dataframe(
     df: pd.DataFrame,
     text_column: str = "text_clean",
     date_column: str = "created_utc",
-    model_save_path: Optional[Path] = None,
-) -> Tuple[pd.DataFrame, Any]:
+    model_save_path: Path | None = None,
+) -> tuple[pd.DataFrame, Any]:
     """Fit BERTopic on the DataFrame and add topic labels.
 
     Args:
@@ -648,6 +785,27 @@ def add_topics_to_dataframe(
         return df, None
 
     model = fit_topic_model(texts, save_path=model_save_path)
+
+    if TOPIC_REDUCE_OUTLIERS:
+        logger.info(
+            "Reducing outliers (strategy=%s, threshold=%s) …",
+            TOPIC_REDUCE_STRATEGY,
+            TOPIC_REDUCE_THRESHOLD,
+        )
+        new_topics = model.reduce_outliers(
+            texts,
+            model.topics_,
+            strategy=TOPIC_REDUCE_STRATEGY,
+            threshold=TOPIC_REDUCE_THRESHOLD,
+        )
+        model.topics_ = new_topics
+        n_outliers = sum(1 for t in new_topics if t == -1)
+        logger.info(
+            "Outliers after reduction: %d (%.1f%%)",
+            n_outliers,
+            100 * n_outliers / len(new_topics),
+        )
+
     topics = model.topics_[: len(df)]  # align with original DF
 
     topic_info = get_topic_info(model)
@@ -659,3 +817,67 @@ def add_topics_to_dataframe(
 
     logger.info("Topics assigned to %d documents", len(df))
     return df, model
+
+
+def consolidate_topics(df: pd.DataFrame) -> pd.DataFrame:
+    """Exclude spam/off-topic topics and merge semantically similar ones.
+
+    This is a post-processing step applied after BERTopic assigns initial
+    topic IDs.  It performs three operations:
+
+    1. **Exclude** — removes rows whose ``topic`` is in ``TOPIC_EXCLUDE``
+       (currently Topic 11: off-topic cricket; Topic 21: Robi spam).
+    2. **Merge** — reassigns source topics into a target topic per
+       ``TOPIC_MERGE`` so that semantically equivalent clusters share an ID.
+    3. **Relabel** — applies ``TOPIC_FINAL_LABELS`` to produce human-readable
+       names for the consolidated groups.
+
+    Args:
+        df: DataFrame with at least ``topic`` and ``topic_label`` columns
+            (as returned by :func:`add_topics_to_dataframe`).
+
+    Returns:
+        Consolidated DataFrame with excluded rows removed, topic IDs
+        reassigned, and labels updated.
+    """
+    n_before = len(df)
+
+    # ── 1. Exclude ─────────────────────────────────────────────────────
+    mask_exclude = df["topic"].isin(TOPIC_EXCLUDE)
+    n_excluded_total = int(mask_exclude.sum())
+    n_by_topic: dict[int, int] = {}
+    for t in TOPIC_EXCLUDE:
+        n_by_topic[t] = int((df["topic"] == t).sum())
+    df = df[~mask_exclude].copy()
+
+    # ── 2. Merge ───────────────────────────────────────────────────────
+    n_merged_by_src: dict[int, int] = {}
+    for src, dst in TOPIC_MERGE.items():
+        n = int((df["topic"] == src).sum())
+        n_merged_by_src[src] = n
+        df.loc[df["topic"] == src, "topic"] = dst
+
+    # ── 3. Relabel ─────────────────────────────────────────────────────
+    for tid, label in TOPIC_FINAL_LABELS.items():
+        df.loc[df["topic"] == tid, "topic_label"] = label
+
+    n_after = len(df)
+    logger.info(
+        "Consolidation: excluded %d rows (%s), merged %d, %d topics remain",
+        n_excluded_total,
+        dict(sorted(n_by_topic.items())),
+        sum(n_merged_by_src.values()),
+        df["topic"].nunique(),
+    )
+
+    # Attach stats for downstream reporting (e.g. dry-run)
+    df.attrs["consolidation_stats"] = {
+        "n_before": n_before,
+        "n_after": n_after,
+        "n_excluded_total": n_excluded_total,
+        "n_excluded_by_topic": n_by_topic,
+        "n_merged_by_src": n_merged_by_src,
+        "n_topics_active": int(df["topic"].nunique()),
+    }
+
+    return df
